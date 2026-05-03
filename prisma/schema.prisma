@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Provider {
+  GOOGLE
+  MANUAL
+}
+
+enum ArticleVisibility {
+  CUSTOM
+  PUBLIC
+}
+
+enum PermissionRole {
+  NONE
+  VIEW
+  EDIT
+}
+
+model User {
+  id           String      @id @default(cuid())
+  name         String
+  email        String      @unique
+  provider     Provider
+  passwordHash String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  sessions     Session[]
+  permissions  Permission[]
+  articles     Article[]   @relation("ArticleAuthor")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Article {
+  id          String            @id @default(cuid())
+  title       String
+  content     Json
+  layout      String            @default("document")
+  visibility  ArticleVisibility @default(CUSTOM)
+  parentId    String?
+  authorId    String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  author      User              @relation("ArticleAuthor", fields: [authorId], references: [id])
+  parent      Article?          @relation("ArticleTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Article[]         @relation("ArticleTree")
+  permissions Permission[]
+
+  @@index([parentId])
+  @@index([authorId])
+}
+
+model Permission {
+  id        String         @id @default(cuid())
+  userId    String
+  articleId String
+  role      PermissionRole
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  article   Article        @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, articleId])
+}
