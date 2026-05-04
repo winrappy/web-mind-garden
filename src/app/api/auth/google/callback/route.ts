@@ -11,10 +11,12 @@ type GoogleTokenResponse = {
 type GoogleProfile = {
   email: string;
   name?: string;
+  picture?: string;
 };
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
+  const callbackUrl = process.env.GOOGLE_REDIRECT_URI || appUrl("/api/auth/google/callback");
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const cookieStore = await cookies();
@@ -29,7 +31,7 @@ export async function GET(request: Request) {
       code,
       client_id: process.env.GOOGLE_CLIENT_ID || "",
       client_secret: process.env.GOOGLE_CLIENT_SECRET || "",
-      redirect_uri: appUrl("/api/auth/google/callback"),
+      redirect_uri: callbackUrl,
       grant_type: "authorization_code",
     }),
   });
@@ -45,11 +47,12 @@ export async function GET(request: Request) {
   const profile = (await profileResponse.json()) as GoogleProfile;
   const user = await prisma.user.upsert({
     where: { email: profile.email.toLowerCase() },
-    update: { name: profile.name || profile.email },
+    update: { name: profile.name || profile.email, avatarUrl: profile.picture || null },
     create: {
       email: profile.email.toLowerCase(),
       name: profile.name || profile.email,
       provider: Provider.GOOGLE,
+      avatarUrl: profile.picture || null,
     },
   });
 

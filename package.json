@@ -11,6 +11,9 @@
     "db:seed": "tsx prisma/seed.ts",
     "prisma:generate": "prisma generate"
   },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "@tiptap/extension-highlight": "^2.10.3",

@@ -19,7 +19,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (body.content) data.content = body.content;
   if (typeof body.layout === "string") data.layout = body.layout;
   if (body.visibility === "CUSTOM" || body.visibility === "PUBLIC") data.visibility = body.visibility;
-  if ("parentId" in body) data.parent = body.parentId ? { connect: { id: body.parentId } } : { disconnect: true };
+
+  if ("parentId" in body) {
+    const newParentId: string | null = body.parentId || null;
+    if (newParentId) {
+      // Guard: parent must be in the same topic
+      const newParent = await prisma.article.findUnique({ where: { id: newParentId } });
+      if (!newParent || newParent.topicId !== existing.topicId) {
+        return NextResponse.json({ error: "Parent article does not belong to the same topic" }, { status: 400 });
+      }
+    }
+    data.parent = newParentId ? { connect: { id: newParentId } } : { disconnect: true };
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.article.update({ where: { id }, data });

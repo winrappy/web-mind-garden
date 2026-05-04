@@ -3,9 +3,14 @@ import { redirect } from "next/navigation";
 import { randomBytes } from "crypto";
 import { appUrl, signState } from "@/lib/auth";
 
+function googleRedirectUri() {
+  return process.env.GOOGLE_REDIRECT_URI || appUrl("/api/auth/google/callback");
+}
+
 export async function GET() {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) redirect("/?error=missing-google-client-id");
+  const callbackUrl = googleRedirectUri();
 
   const state = randomBytes(16).toString("base64url");
   const cookieStore = await cookies();
@@ -18,7 +23,7 @@ export async function GET() {
 
   const params = new URLSearchParams({
     client_id: clientId,
-    redirect_uri: appUrl("/api/auth/google/callback"),
+    redirect_uri: callbackUrl,
     response_type: "code",
     scope: "openid email profile",
     state,

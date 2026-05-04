@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 import type { Content } from "@tiptap/react";
-import { BookOpen, FilePlus2, LogOut, PanelRightOpen, Save, Trash2, X } from "lucide-react";
+import { ArrowLeft, BookOpen, FilePlus2, Leaf, LogOut, PanelRightOpen, Save, Trash2, X } from "lucide-react";
 
 const RichEditor = dynamic(() => import("@/components/rich-editor").then((module) => module.RichEditor), { ssr: false });
 
@@ -14,6 +14,8 @@ type Article = {
   id: string;
   title: string;
   parentId: string | null;
+  projectId: string | null;
+  topicId: string | null;
   layout: string;
   visibility: Visibility;
   content: Content;
@@ -22,13 +24,21 @@ type Article = {
   updatedAt: string;
 };
 
-type User = { id: string; name: string; email: string };
+type User = { id: string; name: string; email: string; avatarUrl?: string | null };
 
 export function Workspace({
+  projectId,
+  topicId,
+  projectName,
+  backHref = "/",
   currentUser,
   users,
   articles: initialArticles,
 }: {
+  projectId: string;
+  topicId: string;
+  projectName: string;
+  backHref?: string;
   currentUser: User;
   users: User[];
   articles: Article[];
@@ -63,7 +73,7 @@ export function Workspace({
     const response = await fetch("/api/articles", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parentId: editable ? selected?.id : null }),
+      body: JSON.stringify({ parentId: editable ? selected?.id : null, projectId, topicId }),
     });
     const article = await response.json();
     setArticles((items) => [article, ...items]);
@@ -86,11 +96,10 @@ export function Workspace({
     <main className="app-shell">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-mark" />
-          <div>
-            <h1>Mind Garden</h1>
-            <p>Next.js article workspace</p>
+          <div className="brand-mark">
+            <Leaf size={16} strokeWidth={1.9} />
           </div>
+          <h1>Mind Garden</h1>
         </div>
         <div className="top-actions">
           <div className="account-menu">
@@ -100,7 +109,12 @@ export function Workspace({
               aria-label="Open account menu"
               onClick={() => setIsAccountOpen((value) => !value)}
             >
-              {currentUser.name.slice(0, 1).toUpperCase()}
+              {currentUser.avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img className="avatar-image" src={currentUser.avatarUrl} alt={currentUser.name} />
+              ) : (
+                currentUser.name.slice(0, 1).toUpperCase()
+              )}
             </button>
             {isAccountOpen ? (
               <div className="account-popover">
@@ -130,6 +144,18 @@ export function Workspace({
       </aside>
 
       <section className="workspace">
+        <div className="workspace-page-head">
+          <div className="page-head-main">
+            <a href={backHref} className="btn icon back-btn" title="Project overview" aria-label="Back to project overview">
+              <ArrowLeft size={18} />
+            </a>
+            <div>
+              <h1>{projectName}</h1>
+              <p>Topic workspace</p>
+            </div>
+          </div>
+        </div>
+
         {selected ? (
           <article className="article-paper" style={{ maxWidth: width }}>
             <div className="paper-toolbar">
