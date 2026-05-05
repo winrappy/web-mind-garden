@@ -10,13 +10,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const project = await prisma.project.findUnique({ where: { id }, include: { permissions: true } });
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const isOwner = project.authorId === user.id;
-  const isMember = project.permissions.some((permission) => permission.userId === user.id);
-  const canEditDescription = isOwner || isMember;
+  const memberRole = project.permissions.find((permission) => permission.userId === user.id)?.role;
+  const canEditDescription = isOwner || memberRole === "EDIT";
   if (!canEditDescription) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await request.json().catch(() => ({}));
   if (!isOwner) {
-    const disallowed = ["name", "imageUrl", "visibility", "memberIds"].some((key) => key in body);
+    const disallowed = ["name", "imageUrl", "visibility", "memberIds", "memberPermissions"].some((key) => key in body);
     if (disallowed) {
       return NextResponse.json({ error: "Only project owner can update project settings" }, { status: 403 });
     }
@@ -31,12 +31,38 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   await prisma.$transaction(async (tx) => {
     await tx.project.update({ where: { id }, data });
-    if (Array.isArray(body.memberIds)) {
-      const memberIds: string[] = body.memberIds.filter((mid: unknown) => typeof mid === "string" && mid !== user.id);
+    if (Array.isArray(body.memberIds) || Array.isArray(body.memberPermissions)) {
+      const memberPermissions: { userId: string; role: "VIEW" | "EDIT" }[] = Array.isArray(body.memberPermissions)
+        ? body.memberPermissions
+            .filter(
+              (item: unknown) =>
+                typeof item === "object" &&
+                item !== null &&
+                typeof (item as { userId?: unknown }).userId === "string"
+            )
+            .map((item: { userId: string; role?: unknown }) => ({
+              userId: item.userId,
+              role: item.role === "EDIT" ? "EDIT" : "VIEW",
+            }))
+            .filter((item: { userId: string; role: "VIEW" | "EDIT" }) => item.userId !== user.id)
+        : [];
+
+      const memberIds: string[] = Array.isArray(body.memberIds)
+        ? body.memberIds.filter((mid: unknown) => typeof mid === "string" && mid !== user.id)
+        : [];
+
+      const effectiveMembers = memberPermissions.length
+        ? memberPermissions
+        : memberIds.map((userId) => ({ userId, role: "VIEW" as const }));
+
       await tx.projectPermission.deleteMany({ where: { projectId: id } });
-      if (memberIds.length > 0) {
+      if (effectiveMembers.length > 0) {
         await tx.projectPermission.createMany({
-          data: memberIds.map((userId) => ({ projectId: id, userId })),
+          data: effectiveMembers.map((permission) => ({
+            projectId: id,
+            userId: permission.userId,
+            role: permission.role,
+          })),
           skipDuplicates: true,
         });
       }

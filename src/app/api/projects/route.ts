@@ -13,7 +13,25 @@ export async function POST(request: Request) {
   const description = typeof body.description === "string" ? body.description.trim() : null;
   const imageUrl = typeof body.imageUrl === "string" ? body.imageUrl.trim() : null;
   const visibility = body.visibility === "RESTRICTED" ? "RESTRICTED" : "PUBLIC";
-  const memberIds: string[] = Array.isArray(body.memberIds) ? body.memberIds.filter((id: unknown) => typeof id === "string") : [];
+  const memberIds: string[] = Array.isArray(body.memberIds)
+    ? body.memberIds.filter((id: unknown) => typeof id === "string")
+    : [];
+  const memberPermissions: { userId: string; role: "VIEW" | "EDIT" }[] = Array.isArray(body.memberPermissions)
+    ? body.memberPermissions
+        .filter(
+          (item: unknown) =>
+            typeof item === "object" &&
+            item !== null &&
+            typeof (item as { userId?: unknown }).userId === "string"
+        )
+        .map((item: { userId: string; role?: unknown }) => ({
+          userId: item.userId,
+          role: item.role === "EDIT" ? "EDIT" : "VIEW",
+        }))
+    : [];
+  const effectiveMembers = memberPermissions.length
+    ? memberPermissions
+    : memberIds.map((userId) => ({ userId, role: "VIEW" as const }));
 
   const project = await prisma.project.create({
     data: {
@@ -22,8 +40,8 @@ export async function POST(request: Request) {
       imageUrl: imageUrl || null,
       visibility,
       authorId: user.id,
-      permissions: memberIds.length > 0
-        ? { create: memberIds.map((userId) => ({ userId })) }
+      permissions: effectiveMembers.length > 0
+        ? { create: effectiveMembers.map((permission) => ({ userId: permission.userId, role: permission.role })) }
         : undefined,
     },
     include: { permissions: { include: { user: true } } },

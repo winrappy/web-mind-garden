@@ -28,6 +28,11 @@ enum ProjectVisibility {
   RESTRICTED
 }
 
+enum ProjectPermissionRole {
+  VIEW
+  EDIT
+}
+
 model User {
   id                 String              @id @default(cuid())
   name               String
@@ -87,6 +92,7 @@ model ProjectPermission {
   id        String @id @default(cuid())
   projectId String
   userId    String
+  role      ProjectPermissionRole @default(VIEW)
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 

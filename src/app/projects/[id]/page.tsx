@@ -15,17 +15,21 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   if (!project) notFound();
 
   const isOwner = project.authorId === user.id;
-  const isMember = project.permissions.some((permission) => permission.userId === user.id);
+  const memberRole = project.permissions.find((permission) => permission.userId === user.id)?.role;
+  const isMember = memberRole === "VIEW" || memberRole === "EDIT";
   const canView = project.visibility === "PUBLIC" || isOwner || isMember;
   if (!canView) notFound();
 
-  const canEditDescription = isOwner || isMember;
+  const canEditProject = isOwner || memberRole === "EDIT";
 
-  const topics = await prisma.topic.findMany({
-    where: { projectId },
-    include: { _count: { select: { articles: true } } },
-    orderBy: { createdAt: "asc" },
-  });
+  const [topics, users] = await Promise.all([
+    prisma.topic.findMany({
+      where: { projectId },
+      include: { _count: { select: { articles: true } } },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.user.findMany({ orderBy: { name: "asc" } }),
+  ]);
 
   return (
     <ProjectOverview
@@ -34,7 +38,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       imageUrl={project.imageUrl}
       visibility={project.visibility}
       description={project.description}
-      canEdit={canEditDescription}
+      isOwner={isOwner}
+      canEditProject={canEditProject}
+      memberPermissions={project.permissions.map((permission) => ({ userId: permission.userId, role: permission.role }))}
+      users={users.map((item) => ({ id: item.id, name: item.name, email: item.email }))}
       topics={topics.map((topic) => ({
         id: topic.id,
         name: topic.name,

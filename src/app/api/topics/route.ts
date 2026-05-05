@@ -17,7 +17,9 @@ export async function POST(request: Request) {
   const project = await prisma.project.findUnique({ where: { id: projectId }, include: { permissions: true } });
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  const canManage = project.authorId === user.id || project.permissions.some((permission) => permission.userId === user.id);
+  const canManage =
+    project.authorId === user.id ||
+    project.permissions.some((permission) => permission.userId === user.id && permission.role === "EDIT");
   if (!canManage) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const topic = await prisma.topic.create({

@@ -23,11 +23,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Topic not found in project" }, { status: 404 });
   }
 
-  const canAccessProject =
-    topic.project.visibility === "PUBLIC" ||
+  const canEditProject =
     topic.project.authorId === user.id ||
-    topic.project.permissions.some((permission) => permission.userId === user.id);
-  if (!canAccessProject) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    topic.project.permissions.some((permission) => permission.userId === user.id && permission.role === "EDIT");
+  if (!canEditProject) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   // When a parent is specified it must belong to the same topic
   if (parentId) {

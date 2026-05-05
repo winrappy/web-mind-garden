@@ -22,7 +22,8 @@ export default async function TopicArticlesPage({
   if (!project) notFound();
 
   const isOwner = project.authorId === user.id;
-  const isMember = project.permissions.some((permission) => permission.userId === user.id);
+  const memberRole = project.permissions.find((permission) => permission.userId === user.id)?.role;
+  const isMember = memberRole === "VIEW" || memberRole === "EDIT";
   const canViewProject = project.visibility === "PUBLIC" || isOwner || isMember;
   if (!canViewProject) notFound();
 
@@ -42,7 +43,8 @@ export default async function TopicArticlesPage({
     .map((article) => ({ ...article, role: roleForArticle(article, user.id) }))
     .filter((article) => article.role !== "NONE");
 
-  if (!visibleArticles.length && (isOwner || isMember)) {
+  const canCreateArticle = isOwner || memberRole === "EDIT";
+  if (!visibleArticles.length && canCreateArticle) {
     const first = await prisma.article.create({
       data: {
         title: "First article",
