@@ -7,3 +7,8 @@ dist
 coverage
 *.log
 tsconfig.tsbuildinfo
+
+.github
+.next-docker
+scripts
+web-diagram

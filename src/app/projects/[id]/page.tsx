@@ -38,6 +38,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       imageUrl={project.imageUrl}
       visibility={project.visibility}
       description={project.description}
+      detail={project.detail}
       isOwner={isOwner}
       canEditProject={canEditProject}
       memberPermissions={project.permissions.map((permission) => ({ userId: permission.userId, role: permission.role }))}

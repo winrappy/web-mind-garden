@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 import type { Content } from "@tiptap/react";
-import { ArrowLeft, Ellipsis, FolderOpen, FolderPlus, Leaf, LogOut, Pencil, Save, Trash2, X } from "lucide-react";
+import { ArrowLeft, Ellipsis, FolderOpen, FolderPlus, Globe, Leaf, Lock, LogOut, Pencil, Save, Settings, Shield, Trash2, X } from "lucide-react";
 
 const RichEditor = dynamic(() => import("@/components/rich-editor").then((module) => module.RichEditor), { ssr: false });
 
@@ -17,6 +17,7 @@ export function ProjectOverview({
   imageUrl,
   visibility,
   description,
+  detail,
   isOwner,
   canEditProject,
   users,
@@ -29,6 +30,7 @@ export function ProjectOverview({
   imageUrl: string | null;
   visibility: "PUBLIC" | "RESTRICTED";
   description: string | null;
+  detail: string | null;
   isOwner: boolean;
   canEditProject: boolean;
   users: { id: string; name: string; email: string }[];
@@ -38,17 +40,37 @@ export function ProjectOverview({
 }) {
   const [topics, setTopics] = useState<ProjectTopic[]>(initialTopics);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [isToolsOpen, setIsToolsOpen] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [accessSaving, setAccessSaving] = useState(false);
+  const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [permissionMenuFor, setPermissionMenuFor] = useState<string | null>(null);
 
   const [projectName, setProjectName] = useState(name);
   const [projectImage, setProjectImage] = useState(imageUrl ?? "");
+  const [imageMode, setImageMode] = useState<"url" | "upload">(imageUrl ? "url" : "upload");
+  const [imageUploadError, setImageUploadError] = useState("");
   const [projectVisibility, setProjectVisibility] = useState<"PUBLIC" | "RESTRICTED">(visibility);
+
+  // Track saved baseline to detect unsaved changes
+  const [savedName, setSavedName] = useState(name);
+  const [savedImage, setSavedImage] = useState(imageUrl ?? "");
+  const [savedVisibility, setSavedVisibility] = useState<"PUBLIC" | "RESTRICTED">(visibility);
+  const [savedPermissions, setSavedPermissions] = useState<Record<string, "NONE" | "VIEW" | "EDIT">>(() => {
+    const map: Record<string, "NONE" | "VIEW" | "EDIT"> = {};
+    for (const user of users) map[user.id] = "NONE";
+    for (const permission of memberPermissions) map[permission.userId] = permission.role;
+    return map;
+  });
 
   const [savedDescription, setSavedDescription] = useState<string | null>(description);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
-  const [descriptionContent, setDescriptionContent] = useState<Content>(() => parseDescriptionContent(description));
+  const [descriptionContent, setDescriptionContent] = useState<Content>(() => parseDescriptionContent(detail));
+  const [savedDetail, setSavedDetail] = useState<string | null>(detail);
+  const [projectDescription, setProjectDescription] = useState(description ?? "");
 
   const [permissions, setPermissions] = useState<Record<string, "NONE" | "VIEW" | "EDIT">>(() => {
     const map: Record<string, "NONE" | "VIEW" | "EDIT"> = {};
@@ -58,6 +80,157 @@ export function ProjectOverview({
   });
 
   const plainDescription = useMemo(() => extractPlainText(descriptionContent).trim(), [descriptionContent]);
+
+  const isSettingsDirty = useMemo(() => {
+    if (projectName.trim() !== savedName) return true;
+    if (projectImage.trim() !== savedImage) return true;
+    if (projectDescription.trim() !== (savedDescription ?? "")) return true;
+    if (projectVisibility !== savedVisibility) return true;
+    for (const userId of Object.keys(permissions)) {
+      if ((permissions[userId] ?? "NONE") !== (savedPermissions[userId] ?? "NONE")) return true;
+    }
+    return false;
+  }, [projectName, projectImage, projectDescription, projectVisibility, permissions, savedName, savedImage, savedDescription, savedVisibility, savedPermissions]);
+
+  const managedMembers = useMemo(() => users.filter((item) => item.id !== currentUser.id), [users, currentUser.id]);
+
+  const accessibleMemberCount = useMemo(
+    () => managedMembers.filter((item) => (permissions[item.id] || "NONE") !== "NONE").length,
+    [managedMembers, permissions],
+  );
+
+  const filteredMembers = useMemo(() => {
+    const keyword = memberSearch.trim().toLowerCase();
+    if (!keyword) return managedMembers;
+    return managedMembers.filter((item) => item.name.toLowerCase().includes(keyword) || item.email.toLowerCase().includes(keyword));
+  }, [managedMembers, memberSearch]);
+
+  const filteredAccessibleMembers = useMemo(
+    () => filteredMembers.filter((item) => (permissions[item.id] || "NONE") !== "NONE"),
+    [filteredMembers, permissions],
+  );
+
+  const filteredNoAccessMembers = useMemo(
+    () => filteredMembers.filter((item) => (permissions[item.id] || "NONE") === "NONE"),
+    [filteredMembers, permissions],
+  );
+
+  const roleLabelMap: Record<"NONE" | "VIEW" | "EDIT", string> = {
+    NONE: "No access",
+    VIEW: "View",
+    EDIT: "Edit",
+  };
+
+  function buildMemberPermissionsPayload(permissionMap: Record<string, "NONE" | "VIEW" | "EDIT">) {
+    return Object.entries(permissionMap)
+      .filter(([, role]) => role !== "NONE")
+      .map(([userId, role]) => ({ userId, role }));
+  }
+
+  async function saveAccessSettings(nextVisibility: "PUBLIC" | "RESTRICTED", nextPermissions: Record<string, "NONE" | "VIEW" | "EDIT">) {
+    if (!isOwner) return false;
+    setAccessSaving(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          visibility: nextVisibility,
+          memberPermissions: buildMemberPermissionsPayload(nextPermissions),
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        setError(body.error || "Unable to save access settings");
+        return false;
+      }
+      setSavedVisibility(nextVisibility);
+      setSavedPermissions({ ...nextPermissions });
+      return true;
+    } finally {
+      setAccessSaving(false);
+    }
+  }
+
+  async function updateMemberPermission(userId: string, role: "NONE" | "VIEW" | "EDIT") {
+    const previous = permissions;
+    const next = {
+      ...permissions,
+      [userId]: role,
+    };
+    setPermissions(next);
+    setPermissionMenuFor(null);
+    const ok = await saveAccessSettings(projectVisibility, next);
+    if (!ok) setPermissions(previous);
+  }
+
+  async function handleVisibilityChange(nextVisibility: "PUBLIC" | "RESTRICTED") {
+    const previousVisibility = projectVisibility;
+    setProjectVisibility(nextVisibility);
+    setPermissionMenuFor(null);
+    const ok = await saveAccessSettings(nextVisibility, permissions);
+    if (!ok) setProjectVisibility(previousVisibility);
+  }
+
+  function renderMemberPermissionRow(item: { id: string; name: string; email: string }) {
+    const role = permissions[item.id] || "NONE";
+    return (
+      <label key={item.id} className="permission-row member-row">
+        <div className="member-row-main">
+          <span className="member-row-avatar" aria-hidden>
+            {(item.name.slice(0, 1) || "?").toUpperCase()}
+          </span>
+          <div className="member-row-meta">
+            <strong>{item.name}</strong>
+            <div className="muted">{item.email}</div>
+          </div>
+        </div>
+        <div className="member-row-actions">
+          <span className={`member-access-label role-${role.toLowerCase()}`}>{roleLabelMap[role]}</span>
+          <div className="member-menu-wrap">
+            <button
+              type="button"
+              className="btn icon member-menu-btn"
+              aria-label={`Change access for ${item.name}`}
+              aria-expanded={permissionMenuFor === item.id}
+              onClick={() => setPermissionMenuFor((prev) => (prev === item.id ? null : item.id))}
+              disabled={!isOwner || accessSaving}
+            >
+              <Ellipsis size={14} />
+            </button>
+            {permissionMenuFor === item.id ? (
+              <div className="member-menu-inline" role="menu" aria-label={`Access options for ${item.name}`}>
+                <div className="member-menu-segmented">
+                  <button
+                    type="button"
+                    className={`member-menu-item role-view ${role === "VIEW" ? "is-active" : ""}`}
+                    onClick={() => updateMemberPermission(item.id, "VIEW")}
+                  >
+                    View
+                  </button>
+                  <button
+                    type="button"
+                    className={`member-menu-item role-edit ${role === "EDIT" ? "is-active" : ""}`}
+                    onClick={() => updateMemberPermission(item.id, "EDIT")}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className={`member-menu-item role-none ${role === "NONE" ? "is-active" : ""}`}
+                    onClick={() => updateMemberPermission(item.id, "NONE")}
+                  >
+                    No access
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </label>
+    );
+  }
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -72,44 +245,21 @@ export function ProjectOverview({
       const response = await fetch(`/api/projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: plainDescription ? JSON.stringify(descriptionContent) : null }),
+        body: JSON.stringify({ detail: plainDescription ? JSON.stringify(descriptionContent) : null }),
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        setError(body.error || "Unable to save description");
+        setError(body.error || "Unable to save detail");
         return;
       }
-      setSavedDescription(plainDescription ? JSON.stringify(descriptionContent) : null);
+      setSavedDetail(plainDescription ? JSON.stringify(descriptionContent) : null);
       setIsEditingDescription(false);
     } finally {
       setSaving(false);
     }
   }
 
-  async function saveProjectSettings() {
-    if (!isOwner) return;
-    setSaving(true);
-    setError("");
-    try {
-      const response = await fetch(`/api/projects/${projectId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: projectName.trim(),
-          imageUrl: projectImage.trim() || null,
-          visibility: projectVisibility,
-        }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        setError(body.error || "Unable to save project settings");
-      }
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function savePermissions() {
+  async function saveAllSettings() {
     if (!isOwner) return;
     setSaving(true);
     setError("");
@@ -121,13 +271,24 @@ export function ProjectOverview({
       const response = await fetch(`/api/projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ memberPermissions: memberPermissionsPayload }),
+        body: JSON.stringify({
+          name: projectName.trim(),
+          description: projectDescription.trim() || null,
+          imageUrl: projectImage.trim() || null,
+          visibility: projectVisibility,
+          memberPermissions: memberPermissionsPayload,
+        }),
       });
-
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        setError(body.error || "Unable to save permissions");
+        setError(body.error || "Unable to save settings");
+        return;
       }
+      setSavedName(projectName.trim());
+      setSavedDescription(projectDescription.trim() || null);
+      setSavedImage(projectImage.trim());
+      setSavedVisibility(projectVisibility);
+      setSavedPermissions({ ...permissions });
     } finally {
       setSaving(false);
     }
@@ -216,9 +377,9 @@ export function ProjectOverview({
         <div className="top-actions">
           <div className="account-menu">
             <button className="avatar account-trigger" aria-expanded={isAccountOpen} aria-label="Open account menu" onClick={() => setIsAccountOpen((value) => !value)}>
-              {currentUser.avatarUrl ? (
+              {currentUser.avatarUrl && !avatarLoadFailed ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img className="avatar-image" src={currentUser.avatarUrl} alt={currentUser.name} />
+                <img className="avatar-image" src={currentUser.avatarUrl} alt={currentUser.name} onError={() => setAvatarLoadFailed(true)} />
               ) : (
                 currentUser.name.slice(0, 1).toUpperCase()
               )}
@@ -242,10 +403,10 @@ export function ProjectOverview({
       <div className="pd-page">
 
         {/* Cover banner */}
-        {projectImage ? (
+        {savedImage ? (
           <div className="pd-cover">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={projectImage} alt={projectName} />
+            <img src={savedImage} alt={savedName} />
           </div>
         ) : null}
 
@@ -259,28 +420,38 @@ export function ProjectOverview({
               </a>
               <div className="pd-title-block">
                 <div className="pd-title-row">
-                  <h1 className="pd-title">{projectName}</h1>
+                  <h1 className="pd-title">{savedName}</h1>
                   <span className={`project-badge ${projectVisibility === "PUBLIC" ? "badge-public" : "badge-restricted"}`}>
                     {projectVisibility === "PUBLIC" ? "Public" : "Restricted"}
                   </span>
                 </div>
-                <p className="pd-subtitle muted">Project dashboard</p>
+                {savedDescription ? (
+                  <p className="pd-project-description">{savedDescription}</p>
+                ) : (
+                  <p className="pd-subtitle muted">Project dashboard</p>
+                )}
               </div>
             </div>
             <div className="pd-header-actions">
-              {!isEditingDescription && canEditProject ? (
-                <button className="btn" onClick={() => setIsEditingDescription(true)}>
-                  <Pencil size={16} /> Edit description
-                </button>
-              ) : null}
               <button className="btn" onClick={() => setIsToolsOpen((v) => !v)} aria-expanded={isToolsOpen}>
                 <Ellipsis size={16} /> Settings
               </button>
             </div>
           </div>
 
-          {/* Description */}
+          {/* Detail */}
           <div className="pd-description-section">
+            <div className="pd-section-header">
+              <div>
+                <h2 className="pd-section-title">Detail</h2>
+                <p className="pd-section-subtitle muted">Project notes and context</p>
+              </div>
+              {canEditProject && !isEditingDescription && (
+                <button className="btn" onClick={() => setIsEditingDescription(true)}>
+                  <Pencil size={14} /> Edit
+                </button>
+              )}
+            </div>
             {isEditingDescription ? (
               <div className="pd-editor-wrap">
                 <RichEditor editable={canEditProject} content={descriptionContent} onChange={setDescriptionContent} />
@@ -288,23 +459,26 @@ export function ProjectOverview({
                   <button
                     className="btn"
                     onClick={() => {
-                      setDescriptionContent(parseDescriptionContent(savedDescription));
+                      setDescriptionContent(parseDescriptionContent(savedDetail));
                       setIsEditingDescription(false);
                     }}
                   >
                     <X size={16} /> Cancel
                   </button>
                   <button className="btn primary" onClick={saveDescription} disabled={saving || !canEditProject}>
-                    <Save size={16} /> Save description
+                    <Save size={16} /> Save
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="pd-description-view">
+              <div
+                className={`pd-description-view${canEditProject ? " is-editable" : ""}`}
+                onClick={() => { if (canEditProject) setIsEditingDescription(true); }}
+              >
                 {plainDescription ? (
                   <span>{plainDescription}</span>
                 ) : (
-                  <span className="pd-description-empty">No description yet.{canEditProject ? ' Click "Edit description" to add one.' : ""}</span>
+                  <span className="pd-description-empty">{canEditProject ? 'No detail yet — click Edit to add one.' : 'No detail.'}</span>
                 )}
               </div>
             )}
@@ -369,76 +543,243 @@ export function ProjectOverview({
           <aside className="pd-drawer">
             <div className="pd-drawer-head">
               <h3>Project settings</h3>
-              <button className="btn icon" onClick={() => setIsToolsOpen(false)} aria-label="Close settings">
-                <X size={16} />
-              </button>
+              <div className="pd-drawer-head-actions">
+                <button
+                  className="btn icon pd-save-btn"
+                  onClick={saveAllSettings}
+                  disabled={!isOwner || saving || !isSettingsDirty}
+                  aria-label="Save settings"
+                  title={isSettingsDirty ? "Save changes" : "No unsaved changes"}
+                >
+                  <Save size={16} />
+                </button>
+                <button className="btn icon" onClick={() => setIsToolsOpen(false)} aria-label="Close settings">
+                  <X size={16} />
+                </button>
+              </div>
             </div>
 
             <div className="pd-drawer-body">
-              <div className="project-tools-group">
-                <label className="field">
-                  <span>Name</span>
-                  <input className="input" value={projectName} onChange={(event) => setProjectName(event.target.value)} disabled={!isOwner} />
-                </label>
-                <label className="field">
-                  <span>Cover image URL</span>
-                  <input className="input" value={projectImage} onChange={(event) => setProjectImage(event.target.value)} disabled={!isOwner} />
-                </label>
-                <label className="field">
-                  <span>Visibility</span>
-                  <select className="select" value={projectVisibility} onChange={(event) => setProjectVisibility(event.target.value as "PUBLIC" | "RESTRICTED")} disabled={!isOwner}>
-                    <option value="PUBLIC">Public</option>
-                    <option value="RESTRICTED">Restricted</option>
-                  </select>
-                </label>
-                <button className="btn primary" onClick={saveProjectSettings} disabled={!isOwner || saving}>
-                  <Save size={16} /> Save details
-                </button>
-              </div>
 
-              <div className="project-tools-group">
-                <h4>Permissions</h4>
-                <p className="muted">Set which users can view or edit this project.</p>
-                <div className="project-permission-list">
-                  {users
-                    .filter((item) => item.id !== currentUser.id)
-                    .map((item) => (
-                      <label key={item.id} className="permission-row">
-                        <div>
-                          <strong>{item.name}</strong>
-                          <div className="muted">{item.email}</div>
-                        </div>
-                        <select
-                          className="select"
-                          value={permissions[item.id] || "NONE"}
-                          onChange={(event) =>
-                            setPermissions((prev) => ({
-                              ...prev,
-                              [item.id]: event.target.value as "NONE" | "VIEW" | "EDIT",
-                            }))
-                          }
-                          disabled={!isOwner}
-                        >
-                          <option value="NONE">No access</option>
-                          <option value="VIEW">View</option>
-                          <option value="EDIT">Edit</option>
-                        </select>
-                      </label>
-                    ))}
+              {/* ── Section 1: General ── */}
+              <div className="settings-section">
+                <div className="settings-section-header">
+                  <div className="settings-section-icon icon-blue"><Settings size={15} /></div>
+                  <div className="settings-section-label">
+                    <strong>General</strong>
+                    <span>Name and cover image</span>
+                  </div>
                 </div>
-                <button className="btn primary" onClick={savePermissions} disabled={!isOwner || saving}>
-                  <Save size={16} /> Save permissions
-                </button>
+                <div className="settings-fields">
+                  <label className="field">
+                    <span>Project name</span>
+                    <input className="input" value={projectName} onChange={(event) => setProjectName(event.target.value)} disabled={!isOwner} />
+                  </label>
+                  <div className="field">
+                    <span className="field-label-with-count">Description <span className="char-count">{projectDescription.length}/100</span></span>
+                    <textarea
+                      className="input settings-desc-textarea"
+                      rows={2}
+                      maxLength={100}
+                      placeholder="Short project summary…"
+                      value={projectDescription}
+                      onChange={(event) => setProjectDescription(event.target.value)}
+                      disabled={!isOwner}
+                    />
+                  </div>
+                  <div className="field">
+                    <span>Cover image</span>
+                    <div className="image-compact-row">
+                      <div className="image-compact-thumb" onClick={() => { if (isOwner) (document.getElementById('cover-image-input') as HTMLInputElement)?.click(); }}>
+                        {projectImage ? (
+                          <>
+                            <img src={projectImage} alt="cover" />
+                            {isOwner && (
+                              <button
+                                type="button"
+                                className="image-thumb-remove"
+                                onClick={(e) => { e.stopPropagation(); setProjectImage(""); setImageUploadError(""); setImageMode("upload"); }}
+                                title="Remove image"
+                                aria-label="Remove image"
+                              ><X size={12} /></button>
+                            )}
+                          </>
+                        ) : (
+                          <span className="image-compact-empty">🖼</span>
+                        )}
+                        <input
+                          id="cover-image-input"
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          className="image-upload-input"
+                          disabled={!isOwner}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (!file) return;
+                            if (file.size > 2 * 1024 * 1024) { setImageUploadError("Image must be under 2 MB"); return; }
+                            setImageUploadError("");
+                            const reader = new FileReader();
+                            reader.onload = () => { setProjectImage(reader.result as string); setImageMode("upload"); };
+                            reader.readAsDataURL(file);
+                          }}
+                        />
+                      </div>
+                      <div className="image-compact-meta">
+                        {imageMode === "url" ? (
+                          <input
+                            className="input image-compact-url"
+                            placeholder="https://…"
+                            value={projectImage}
+                            onChange={(event) => setProjectImage(event.target.value)}
+                            disabled={!isOwner}
+                          />
+                        ) : (
+                          <span className="image-compact-name muted">
+                            {projectImage ? "Image uploaded" : "No image set"}
+                          </span>
+                        )}
+                        <div className="image-compact-actions">
+                          <button type="button" className="image-action-btn" onClick={() => { if (isOwner) (document.getElementById('cover-image-input') as HTMLInputElement)?.click(); }} disabled={!isOwner}>Upload</button>
+                          <span className="image-action-sep">or</span>
+                          <button type="button" className={`image-action-btn${imageMode === "url" ? " is-active" : ""}`} onClick={() => setImageMode(imageMode === "url" ? "upload" : "url")} disabled={!isOwner}>Paste link</button>
+                        </div>
+                        {imageUploadError && <span className="image-upload-error">{imageUploadError}</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div className="project-tools-group danger-zone">
-                <h4>Danger zone</h4>
-                <button className="btn danger" onClick={deleteProject} disabled={!isOwner}>
-                  <Trash2 size={16} /> Delete project
-                </button>
+              {/* ── Section 2: Permissions ── */}
+              <div className="settings-section">
+                <div className="settings-section-header">
+                  <div className="settings-section-icon icon-teal"><Shield size={15} /></div>
+                  <div className="settings-section-label">
+                    <strong>Member access</strong>
+                    <span>Visibility and member permissions</span>
+                  </div>
+                </div>
+                <div className="settings-fields">
+                  <div className="visibility-cards">
+                    <button
+                      type="button"
+                      className={`visibility-card${projectVisibility === "PUBLIC" ? " is-active" : ""}`}
+                      onClick={() => { if (projectVisibility !== "PUBLIC") void handleVisibilityChange("PUBLIC"); }}
+                      disabled={!isOwner || accessSaving}
+                    >
+                      <Globe size={20} />
+                      <strong>Public</strong>
+                      <span>Anyone can view this project</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`visibility-card${projectVisibility === "RESTRICTED" ? " is-active" : ""}`}
+                      onClick={() => { if (projectVisibility !== "RESTRICTED") void handleVisibilityChange("RESTRICTED"); }}
+                      disabled={!isOwner || accessSaving}
+                    >
+                      <Lock size={20} />
+                      <strong>Restricted</strong>
+                      <span>Invited members only</span>
+                    </button>
+                  </div>
+                </div>
+
+                {projectVisibility === "RESTRICTED" ? (
+                  <div className="member-access-inline">
+                    <button
+                      className="btn member-access-trigger"
+                      onClick={() => {
+                        setPermissionMenuFor(null);
+                        setIsMembersModalOpen(true);
+                      }}
+                      disabled={!isOwner || accessSaving}
+                    >
+                      {accessibleMemberCount} member{accessibleMemberCount !== 1 ? "s" : ""} can access
+                    </button>
+                    <p className="member-access-hint muted">Choose who can view or edit this project.</p>
+                  </div>
+                ) : (
+                  <p className="member-access-public muted">Public project does not require member selection.</p>
+                )}
               </div>
 
-              {error ? <p className="login-error">{error}</p> : null}
+              {projectVisibility === "RESTRICTED" && isMembersModalOpen ? (
+                <div className="member-modal-overlay">
+                  <div
+                    className="member-modal-backdrop"
+                    onClick={() => {
+                      setPermissionMenuFor(null);
+                      setIsMembersModalOpen(false);
+                    }}
+                    aria-hidden
+                  />
+                  <div className="member-modal" role="dialog" aria-modal="true" aria-label="Manage members">
+                    <div className="member-modal-head">
+                      <h4>Manage member access</h4>
+                      <button
+                        className="btn icon"
+                        onClick={() => {
+                          setPermissionMenuFor(null);
+                          setIsMembersModalOpen(false);
+                        }}
+                        aria-label="Close member access modal"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                    <input
+                      className="input"
+                      placeholder="Search by name or email…"
+                      value={memberSearch}
+                      onChange={(event) => setMemberSearch(event.target.value)}
+                      disabled={!isOwner}
+                    />
+                    <div className="project-permission-list member-modal-list">
+                      {filteredMembers.length > 0 ? (
+                        <>
+                          <div className="member-modal-group">
+                            <div className="member-modal-group-title">Members with access ({filteredAccessibleMembers.length})</div>
+                            {filteredAccessibleMembers.length > 0 ? filteredAccessibleMembers.map(renderMemberPermissionRow) : (
+                              <p className="member-group-empty muted">No members currently have access.</p>
+                            )}
+                          </div>
+
+                          <div className="member-modal-group member-modal-group-muted">
+                            <div className="member-modal-group-title">Members without access ({filteredNoAccessMembers.length})</div>
+                            {filteredNoAccessMembers.length > 0 ? filteredNoAccessMembers.map(renderMemberPermissionRow) : (
+                              <p className="member-group-empty muted">All matched members already have access.</p>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="member-search-empty muted">No members found.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ── Section 3: Danger zone ── */}
+              <div className="settings-section settings-danger">
+                <div className="settings-section-header">
+                  <div className="settings-section-icon icon-red"><Trash2 size={15} /></div>
+                  <div className="settings-section-label">
+                    <strong>Danger zone</strong>
+                    <span>Irreversible actions</span>
+                  </div>
+                </div>
+                <div className="settings-danger-content">
+                  <div className="settings-danger-text">
+                    <strong>Delete this project</strong>
+                    <span>Removes all topics and articles permanently.</span>
+                  </div>
+                  <button className="btn danger" onClick={deleteProject} disabled={!isOwner}>
+                    <Trash2 size={15} /> Delete
+                  </button>
+                </div>
+              </div>
+
+              {error ? <p className="login-error" style={{padding: "0 24px"}}>{error}</p> : null}
             </div>
           </aside>
         </div>

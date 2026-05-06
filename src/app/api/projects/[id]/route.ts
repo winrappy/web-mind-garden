@@ -25,7 +25,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const data: Record<string, unknown> = {};
 
   if (typeof body.name === "string" && body.name.trim()) data.name = body.name.trim();
-  if ("description" in body) data.description = typeof body.description === "string" ? body.description.trim() || null : null;
+  if ("description" in body) data.description = typeof body.description === "string" ? body.description.slice(0, 100).trim() || null : null;
+  if ("detail" in body) data.detail = typeof body.detail === "string" ? body.detail.trim() || null : null;
   if ("imageUrl" in body) data.imageUrl = typeof body.imageUrl === "string" ? body.imageUrl.trim() || null : null;
   if (body.visibility === "PUBLIC" || body.visibility === "RESTRICTED") data.visibility = body.visibility;
 

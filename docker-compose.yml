@@ -15,11 +15,24 @@ services:
       timeout: 5s
       retries: 20
 
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+
   web:
     build: .
     command: sh -c "npx prisma generate && npx prisma db push && npm run db:seed && npm run dev"
     env_file:
       - .env
+    environment:
+      NEXT_DIST_DIR: .next-docker
     ports:
       - "3000:3000"
     volumes:

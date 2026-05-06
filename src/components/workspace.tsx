@@ -48,7 +48,9 @@ export function Workspace({
   const [query, setQuery] = useState("");
   const [isPropertiesOpen, setIsPropertiesOpen] = useState(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const selected = articles.find((article) => article.id === selectedId) || articles[0];
+  const selectedPermissions = getArticlePermissions(selected);
   const editable = selected?.role === "EDIT";
   const width = selected?.layout === "compact" ? 860 : selected?.layout === "wide" ? 1360 : 1120;
   const descendantIds = useMemo(() => new Set(selected ? getDescendantIds(articles, selected.id) : []), [articles, selected]);
@@ -91,7 +93,8 @@ export function Workspace({
     window.location.href = "/";
   }
 
-  const filteredArticles = articles.filter((article) => article.title.toLowerCase().includes(query.toLowerCase()));
+  const queryLower = query.toLowerCase();
+  const filteredArticles = articles.filter((article) => getArticleTitle(article).toLowerCase().includes(queryLower));
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -109,9 +112,9 @@ export function Workspace({
               aria-label="Open account menu"
               onClick={() => setIsAccountOpen((value) => !value)}
             >
-              {currentUser.avatarUrl ? (
+              {currentUser.avatarUrl && !avatarLoadFailed ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img className="avatar-image" src={currentUser.avatarUrl} alt={currentUser.name} />
+                <img className="avatar-image" src={currentUser.avatarUrl} alt={currentUser.name} onError={() => setAvatarLoadFailed(true)} />
               ) : (
                 currentUser.name.slice(0, 1).toUpperCase()
               )}
@@ -178,7 +181,7 @@ export function Workspace({
             <header className="article-header">
               <input
                 className="title-input"
-                value={selected.title}
+                value={getArticleTitle(selected)}
                 disabled={!editable}
                 onChange={(event) => {
                   const title = event.target.value;
@@ -241,7 +244,7 @@ export function Workspace({
                     .filter((article) => article.id !== selected.id && article.role === "EDIT" && !descendantIds.has(article.id))
                     .map((article) => (
                       <option key={article.id} value={article.id}>
-                        {article.title}
+                        {getArticleTitle(article)}
                       </option>
                     ))}
                 </select>
@@ -270,9 +273,9 @@ export function Workspace({
                   <select
                     className="select"
                     disabled={!editable}
-                    value={selected.permissions.find((permission) => permission.userId === user.id)?.role || "NONE"}
+                    value={selectedPermissions.find((permission) => permission.userId === user.id)?.role || "NONE"}
                     onChange={(event) => {
-                      const permissions = upsertPermission(selected.permissions, user.id, event.target.value as Role);
+                      const permissions = upsertPermission(selectedPermissions, user.id, event.target.value as Role);
                       saveArticle({ permissions });
                     }}
                   >
@@ -290,30 +293,93 @@ export function Workspace({
   );
 }
 
-function renderTree(articles: Article[], selectedId: string | undefined, select: (id: string) => void, parentId: string | null = null, depth = 0) {
-  return articles
-    .filter((article) => article.parentId === parentId)
-    .map((article) => (
-      <div key={article.id}>
-        <button
-          className={`tree-item ${article.id === selectedId ? "active" : ""}`}
-          style={{ marginLeft: depth * 18, width: `calc(100% - ${depth * 18}px)` }}
-          onClick={() => select(article.id)}
-        >
-          <span>
-            <span className="tree-title">{article.title}</span>
-            <span className="tree-meta">{article.role === "EDIT" ? "Can edit" : "Can view"}</span>
-          </span>
-          <span className="badge">{article.visibility === "PUBLIC" ? "Public" : "Custom"}</span>
-        </button>
-        {renderTree(articles, selectedId, select, article.id, depth + 1)}
-      </div>
-    ));
+function renderTree(
+  articles: Article[],
+  selectedId: string | undefined,
+  select: (id: string) => void,
+  parentId: string | null = null,
+  depth = 0,
+  path: Set<string> = new Set(),
+) {
+  const articleIds = new Set(articles.map((article) => article.id));
+
+  let currentLevel = articles.filter((article) => normalizeParentId(article.parentId) === parentId);
+
+  // Fallback for corrupted trees: if there is no root (parentId=null), render dangling/self-linked items as roots.
+  if (depth === 0 && currentLevel.length === 0) {
+    const fallbackRoots = articles.filter((article) => {
+      const parent = normalizeParentId(article.parentId);
+      return parent === null || parent === article.id || !articleIds.has(parent);
+    });
+    currentLevel = fallbackRoots.length > 0 ? fallbackRoots : articles;
+  }
+
+  return currentLevel.map((article) => {
+      const hasCycle = path.has(article.id);
+      const nextPath = new Set(path);
+      nextPath.add(article.id);
+
+      return (
+        <div key={article.id}>
+          <button
+            className={`tree-item ${article.id === selectedId ? "active" : ""}`}
+            style={{ marginLeft: depth * 18, width: `calc(100% - ${depth * 18}px)` }}
+            onClick={() => select(article.id)}
+          >
+            <span>
+              <span className="tree-title">{getArticleTitle(article)}</span>
+              <span className="tree-meta">{article.role === "EDIT" ? "Can edit" : "Can view"}</span>
+            </span>
+            <span className="badge">{article.visibility === "PUBLIC" ? "Public" : "Custom"}</span>
+          </button>
+          {hasCycle ? null : renderTree(articles, selectedId, select, article.id, depth + 1, nextPath)}
+        </div>
+      );
+    });
+}
+
+function normalizeParentId(parentId: string | null | undefined): string | null {
+  if (typeof parentId !== "string") return null;
+  const value = parentId.trim();
+  return value || null;
 }
 
 function getDescendantIds(articles: Article[], articleId: string): string[] {
-  const children = articles.filter((article) => article.parentId === articleId);
-  return children.flatMap((child) => [child.id, ...getDescendantIds(articles, child.id)]);
+  const descendants: string[] = [];
+  const visited = new Set<string>([articleId]);
+  const stack = [articleId];
+
+  while (stack.length > 0) {
+    const currentId = stack.pop();
+    if (!currentId) continue;
+
+    const children = articles.filter((article) => article.parentId === currentId);
+    for (const child of children) {
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
+      descendants.push(child.id);
+      stack.push(child.id);
+    }
+  }
+
+  return descendants;
+}
+
+function getArticleTitle(article: Pick<Article, "title">): string {
+  if (typeof article.title !== "string") return "Untitled";
+  const normalized = article.title.trim();
+  return normalized || "Untitled";
+}
+
+function getArticlePermissions(article: Pick<Article, "permissions"> | undefined): { userId: string; role: Role }[] {
+  if (!article || !Array.isArray(article.permissions)) return [];
+  return article.permissions.filter(
+    (item): item is { userId: string; role: Role } =>
+      !!item &&
+      typeof item === "object" &&
+      typeof item.userId === "string" &&
+      (item.role === "NONE" || item.role === "VIEW" || item.role === "EDIT"),
+  );
 }
 
 function upsertPermission(permissions: { userId: string; role: Role }[], userId: string, role: Role) {
