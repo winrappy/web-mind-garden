@@ -11,6 +11,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "prisma:generate": "prisma generate",
     "screenshot": "tsx scripts/screenshot.ts",
+    "flow:image": "npm run screenshot && npm run flow-image",
     "penpot-upload": "node scripts/penpot-upload.mjs",
     "flow-image": "node scripts/flow-image.mjs"
   },
