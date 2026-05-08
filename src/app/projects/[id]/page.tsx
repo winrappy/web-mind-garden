@@ -15,12 +15,13 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   if (!project) notFound();
 
   const isOwner = project.authorId === user.id;
-  const memberRole = project.permissions.find((permission) => permission.userId === user.id)?.role;
-  const isMember = memberRole === "VIEW" || memberRole === "EDIT";
+  const memberRole = String(project.permissions.find((permission) => permission.userId === user.id)?.role || "");
+  const isMember = memberRole === "VIEW" || memberRole === "EDIT" || memberRole === "ADMIN";
   const canView = project.visibility === "PUBLIC" || isOwner || isMember;
   if (!canView) notFound();
 
-  const canEditProject = isOwner || memberRole === "EDIT";
+  const canEditProject = isOwner || memberRole === "EDIT" || memberRole === "ADMIN";
+  const canManageMembers = isOwner || memberRole === "ADMIN";
 
   const [topics, users] = await Promise.all([
     prisma.topic.findMany({
@@ -41,6 +42,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       detail={project.detail}
       isOwner={isOwner}
       canEditProject={canEditProject}
+      canManageMembers={canManageMembers}
       memberPermissions={project.permissions.map((permission) => ({ userId: permission.userId, role: permission.role }))}
       users={users.map((item) => ({ id: item.id, name: item.name, email: item.email }))}
       topics={topics.map((topic) => ({

@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { roleForArticle, defaultContent } from "@/lib/articles";
+import { roleForArticle, defaultContent, listProjectElevatedUserIds, normalizeEditorContent } from "@/lib/articles";
 import { Workspace } from "@/components/workspace";
 
 type RoleString = "NONE" | "VIEW" | "EDIT";
@@ -21,14 +21,16 @@ export default async function TopicArticlesPage({
   });
   if (!project) notFound();
 
-  const isOwner = project.authorId === user.id;
-  const memberRole = project.permissions.find((permission) => permission.userId === user.id)?.role;
-  const isMember = memberRole === "VIEW" || memberRole === "EDIT";
-  const canViewProject = project.visibility === "PUBLIC" || isOwner || isMember;
-  if (!canViewProject) notFound();
-
-  const topic = await prisma.topic.findUnique({ where: { id: topicId } });
+  const topic = await prisma.topic.findUnique({ where: { id: topicId }, select: { id: true, name: true, projectId: true, authorId: true } });
   if (!topic || topic.projectId !== projectId) notFound();
+
+  const isOwner = project.authorId === user.id;
+  const memberRole = String(project.permissions.find((permission) => permission.userId === user.id)?.role || "");
+  const isMember = memberRole === "VIEW" || memberRole === "EDIT" || memberRole === "ADMIN";
+  const isProjectElevated = isOwner || memberRole === "EDIT" || memberRole === "ADMIN";
+  const isTopicOwner = topic.authorId === user.id;
+  const canViewProject = project.visibility === "PUBLIC" || isOwner || isMember || isTopicOwner;
+  if (!canViewProject) notFound();
 
   const [articles, users] = await Promise.all([
     prisma.article.findMany({
@@ -40,11 +42,30 @@ export default async function TopicArticlesPage({
   ]);
 
   const visibleArticles = articles
-    .map((article) => ({ ...article, role: roleForArticle(article, user.id) }))
+    .map((article) => ({
+      ...article,
+      role:
+        topic.authorId === user.id
+          ? "EDIT"
+          : roleForArticle(article, user.id, {
+              authorId: project.authorId,
+              permissions: project.permissions.map((permission) => ({ userId: permission.userId, role: String(permission.role) })),
+            }),
+    }))
     .filter((article) => article.role !== "NONE");
 
-  const canCreateArticle = isOwner || memberRole === "EDIT";
+  const canCreateArticle = isProjectElevated;
   if (!visibleArticles.length && canCreateArticle) {
+    const elevatedUserIds = listProjectElevatedUserIds({
+      authorId: project.authorId,
+      permissions: project.permissions.map((permission) => ({ userId: permission.userId, role: String(permission.role) })),
+    });
+
+    const firstPermissions = [...new Set<string>([user.id, ...elevatedUserIds])].map((userId) => ({ userId, role: "EDIT" as const }));
+    if (topic.authorId && !firstPermissions.some((permission) => permission.userId === topic.authorId)) {
+      firstPermissions.push({ userId: topic.authorId, role: "EDIT" as const });
+    }
+
     const first = await prisma.article.create({
       data: {
         title: "First article",
@@ -52,7 +73,7 @@ export default async function TopicArticlesPage({
         topicId,
         authorId: user.id,
         content: defaultContent,
-        permissions: { create: { userId: user.id, role: "EDIT" } },
+        permissions: { create: firstPermissions },
       },
     });
     redirect(`/projects/${projectId}/topics/${topicId}/articles?article=${first.id}`);
@@ -63,6 +84,7 @@ export default async function TopicArticlesPage({
       projectId={projectId}
       topicId={topicId}
       projectName={`${project.name} / ${topic.name}`}
+      topicName={topic.name}
       backHref={`/projects/${projectId}`}
       currentUser={{ id: user.id, name: user.name, email: user.email, avatarUrl: user.avatarUrl }}
       users={users.map((item) => ({ id: item.id, name: item.name, email: item.email }))}
@@ -74,7 +96,7 @@ export default async function TopicArticlesPage({
         topicId: article.topicId,
         layout: article.layout,
         visibility: article.visibility,
-        content: article.content as never,
+        content: normalizeEditorContent(article.content) as never,
         role: article.role as RoleString,
         permissions: article.permissions.map((permission) => ({
           userId: permission.userId,

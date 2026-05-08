@@ -20,7 +20,11 @@ export default async function Home() {
     .filter((project) => {
       if (project.visibility === "PUBLIC") return true;
       if (project.authorId === user.id) return true;
-      return project.permissions.some((p) => p.userId === user.id && (p.role === "VIEW" || p.role === "EDIT"));
+      return project.permissions.some((p) => {
+        if (p.userId !== user.id) return false;
+        const role = String(p.role);
+        return role === "VIEW" || role === "EDIT" || role === "ADMIN";
+      });
     })
     .map((project) => ({
       id: project.id,

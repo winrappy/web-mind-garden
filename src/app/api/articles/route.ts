@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { defaultContent, roleForArticle } from "@/lib/articles";
+import { defaultContent, listProjectElevatedUserIds, roleForArticle } from "@/lib/articles";
 import { prisma } from "@/lib/prisma";
 
 export async function POST(request: Request) {
@@ -25,7 +25,11 @@ export async function POST(request: Request) {
 
   const canEditProject =
     topic.project.authorId === user.id ||
-    topic.project.permissions.some((permission) => permission.userId === user.id && permission.role === "EDIT");
+    topic.project.permissions.some((permission) => {
+      if (permission.userId !== user.id) return false;
+      const role = String(permission.role);
+      return role === "EDIT" || role === "ADMIN";
+    });
   if (!canEditProject) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   // When a parent is specified it must belong to the same topic
@@ -36,6 +40,18 @@ export async function POST(request: Request) {
     }
   }
 
+  const elevatedUserIds = listProjectElevatedUserIds({
+    authorId: topic.project.authorId,
+    permissions: topic.project.permissions.map((permission) => ({
+      userId: permission.userId,
+      role: String(permission.role),
+    })),
+  });
+  const permissionData = [...new Set<string>([user.id, ...elevatedUserIds])].map((userId) => ({ userId, role: "EDIT" as const }));
+  if (topic.authorId && !permissionData.some((item) => item.userId === topic.authorId)) {
+    permissionData.push({ userId: topic.authorId, role: "EDIT" as const });
+  }
+
   const article = await prisma.article.create({
     data: {
       title: "Untitled article",
@@ -44,7 +60,7 @@ export async function POST(request: Request) {
       topicId,
       authorId: user.id,
       content: defaultContent,
-      permissions: { create: { userId: user.id, role: "EDIT" } },
+      permissions: { create: permissionData },
     },
     include: { permissions: true },
   });
@@ -58,7 +74,14 @@ export async function POST(request: Request) {
     layout: article.layout,
     visibility: article.visibility,
     content: article.content,
-    role: roleForArticle(article, user.id),
+    role: roleForArticle(
+      article,
+      user.id,
+      {
+        authorId: topic.project.authorId,
+        permissions: topic.project.permissions.map((permission) => ({ userId: permission.userId, role: String(permission.role) })),
+      },
+    ),
     permissions: article.permissions.map((permission) => ({ userId: permission.userId, role: permission.role })),
     updatedAt: article.updatedAt.toISOString(),
   });

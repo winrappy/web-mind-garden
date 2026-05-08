@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   const memberIds: string[] = Array.isArray(body.memberIds)
     ? body.memberIds.filter((id: unknown) => typeof id === "string")
     : [];
-  const memberPermissions: { userId: string; role: "VIEW" | "EDIT" }[] = Array.isArray(body.memberPermissions)
+  const memberPermissions: { userId: string; role: "VIEW" | "EDIT" | "ADMIN" }[] = Array.isArray(body.memberPermissions)
     ? body.memberPermissions
         .filter(
           (item: unknown) =>
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
         )
         .map((item: { userId: string; role?: unknown }) => ({
           userId: item.userId,
-          role: item.role === "EDIT" ? "EDIT" : "VIEW",
+          role: item.role === "ADMIN" ? "ADMIN" : item.role === "EDIT" ? "EDIT" : "VIEW",
         }))
     : [];
   const effectiveMembers = memberPermissions.length

@@ -9,6 +9,7 @@
     "lint": "next lint",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed:local": "DATABASE_URL=postgresql://mindgarden:mindgarden@localhost:5432/mindgarden?schema=public tsx prisma/seed.ts",
     "prisma:generate": "prisma generate",
     "screenshot": "tsx scripts/screenshot.ts",
     "flow:image": "npm run screenshot && npm run flow-image",

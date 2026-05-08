@@ -10,15 +10,20 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const project = await prisma.project.findUnique({ where: { id }, include: { permissions: true } });
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const isOwner = project.authorId === user.id;
-  const memberRole = project.permissions.find((permission) => permission.userId === user.id)?.role;
-  const canEditDescription = isOwner || memberRole === "EDIT";
+  const memberRole = String(project.permissions.find((permission) => permission.userId === user.id)?.role || "");
+  const isProjectAdmin = memberRole === "ADMIN";
+  const canEditDescription = isOwner || memberRole === "EDIT" || isProjectAdmin;
+  const canManageMembers = isOwner || isProjectAdmin;
   if (!canEditDescription) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await request.json().catch(() => ({}));
   if (!isOwner) {
-    const disallowed = ["name", "imageUrl", "visibility", "memberIds", "memberPermissions"].some((key) => key in body);
+    const disallowed = ["name", "imageUrl", "visibility", "memberIds"].some((key) => key in body);
     if (disallowed) {
       return NextResponse.json({ error: "Only project owner can update project settings" }, { status: 403 });
+    }
+    if ("memberPermissions" in body && !canManageMembers) {
+      return NextResponse.json({ error: "Only project owner or admin can manage members" }, { status: 403 });
     }
   }
 
@@ -33,7 +38,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   await prisma.$transaction(async (tx) => {
     await tx.project.update({ where: { id }, data });
     if (Array.isArray(body.memberIds) || Array.isArray(body.memberPermissions)) {
-      const memberPermissions: { userId: string; role: "VIEW" | "EDIT" }[] = Array.isArray(body.memberPermissions)
+      const memberPermissions: { userId: string; role: "VIEW" | "EDIT" | "ADMIN" }[] = Array.isArray(body.memberPermissions)
         ? body.memberPermissions
             .filter(
               (item: unknown) =>
@@ -43,9 +48,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
             )
             .map((item: { userId: string; role?: unknown }) => ({
               userId: item.userId,
-              role: item.role === "EDIT" ? "EDIT" : "VIEW",
+              role: item.role === "ADMIN" ? "ADMIN" : item.role === "EDIT" ? "EDIT" : "VIEW",
             }))
-            .filter((item: { userId: string; role: "VIEW" | "EDIT" }) => item.userId !== user.id)
+            .filter((item: { userId: string; role: "VIEW" | "EDIT" | "ADMIN" }) => item.userId !== user.id)
         : [];
 
       const memberIds: string[] = Array.isArray(body.memberIds)

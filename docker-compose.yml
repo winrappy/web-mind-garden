@@ -32,6 +32,7 @@ services:
     env_file:
       - .env
     environment:
+      DATABASE_URL: postgresql://mindgarden:mindgarden@db:5432/mindgarden?schema=public
       NEXT_DIST_DIR: .next-docker
     ports:
       - "3000:3000"

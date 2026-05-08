@@ -31,6 +31,7 @@ enum ProjectVisibility {
 enum ProjectPermissionRole {
   VIEW
   EDIT
+  ADMIN
 }
 
 model User {
@@ -46,6 +47,7 @@ model User {
   permissions        Permission[]
   articles           Article[]           @relation("ArticleAuthor")
   ownedProjects      Project[]           @relation("ProjectOwner")
+  ownedTopics        Topic[]             @relation("TopicOwner")
   projectPermissions ProjectPermission[]
 }
 
@@ -79,14 +81,17 @@ model Project {
 model Topic {
   id          String    @id @default(cuid())
   projectId   String
+  authorId    String?
   name        String
   description String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author      User?     @relation("TopicOwner", fields: [authorId], references: [id], onDelete: SetNull)
   articles    Article[]
 
   @@index([projectId])
+  @@index([authorId])
 }
 
 model ProjectPermission {

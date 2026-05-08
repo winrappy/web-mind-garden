@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Content } from "@tiptap/react";
 import { ArrowLeft, Ellipsis, FolderOpen, FolderPlus, Globe, Leaf, Lock, LogOut, Pencil, Save, Settings, Shield, Trash2, X } from "lucide-react";
 
@@ -9,7 +9,7 @@ const RichEditor = dynamic(() => import("@/components/rich-editor").then((module
 
 type User = { id: string; name: string; email: string; avatarUrl?: string | null };
 type ProjectTopic = { id: string; name: string; description: string | null; articleCount: number };
-type MemberPermission = { userId: string; role: "VIEW" | "EDIT" };
+type MemberPermission = { userId: string; role: "VIEW" | "EDIT" | "ADMIN" };
 
 export function ProjectOverview({
   projectId,
@@ -20,6 +20,7 @@ export function ProjectOverview({
   detail,
   isOwner,
   canEditProject,
+  canManageMembers,
   users,
   memberPermissions,
   topics: initialTopics,
@@ -33,6 +34,7 @@ export function ProjectOverview({
   detail: string | null;
   isOwner: boolean;
   canEditProject: boolean;
+  canManageMembers: boolean;
   users: { id: string; name: string; email: string }[];
   memberPermissions: MemberPermission[];
   topics: ProjectTopic[];
@@ -48,6 +50,7 @@ export function ProjectOverview({
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
   const [permissionMenuFor, setPermissionMenuFor] = useState<string | null>(null);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [projectName, setProjectName] = useState(name);
   const [projectImage, setProjectImage] = useState(imageUrl ?? "");
@@ -59,8 +62,8 @@ export function ProjectOverview({
   const [savedName, setSavedName] = useState(name);
   const [savedImage, setSavedImage] = useState(imageUrl ?? "");
   const [savedVisibility, setSavedVisibility] = useState<"PUBLIC" | "RESTRICTED">(visibility);
-  const [savedPermissions, setSavedPermissions] = useState<Record<string, "NONE" | "VIEW" | "EDIT">>(() => {
-    const map: Record<string, "NONE" | "VIEW" | "EDIT"> = {};
+  const [savedPermissions, setSavedPermissions] = useState<Record<string, "NONE" | "VIEW" | "EDIT" | "ADMIN">>(() => {
+    const map: Record<string, "NONE" | "VIEW" | "EDIT" | "ADMIN"> = {};
     for (const user of users) map[user.id] = "NONE";
     for (const permission of memberPermissions) map[permission.userId] = permission.role;
     return map;
@@ -72,8 +75,8 @@ export function ProjectOverview({
   const [savedDetail, setSavedDetail] = useState<string | null>(detail);
   const [projectDescription, setProjectDescription] = useState(description ?? "");
 
-  const [permissions, setPermissions] = useState<Record<string, "NONE" | "VIEW" | "EDIT">>(() => {
-    const map: Record<string, "NONE" | "VIEW" | "EDIT"> = {};
+  const [permissions, setPermissions] = useState<Record<string, "NONE" | "VIEW" | "EDIT" | "ADMIN">>(() => {
+    const map: Record<string, "NONE" | "VIEW" | "EDIT" | "ADMIN"> = {};
     for (const user of users) map[user.id] = "NONE";
     for (const permission of memberPermissions) map[permission.userId] = permission.role;
     return map;
@@ -115,30 +118,55 @@ export function ProjectOverview({
     [filteredMembers, permissions],
   );
 
-  const roleLabelMap: Record<"NONE" | "VIEW" | "EDIT", string> = {
+  const roleLabelMap: Record<"NONE" | "VIEW" | "EDIT" | "ADMIN", string> = {
     NONE: "No access",
     VIEW: "View",
     EDIT: "Edit",
+    ADMIN: "Admin",
   };
 
-  function buildMemberPermissionsPayload(permissionMap: Record<string, "NONE" | "VIEW" | "EDIT">) {
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+
+      if (isAccountOpen && accountMenuRef.current && !accountMenuRef.current.contains(target)) {
+        setIsAccountOpen(false);
+      }
+
+      if (permissionMenuFor && !target.closest(".member-menu-wrap") && !target.closest(".member-menu-inline")) {
+        setPermissionMenuFor(null);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [isAccountOpen, permissionMenuFor]);
+
+  function buildMemberPermissionsPayload(permissionMap: Record<string, "NONE" | "VIEW" | "EDIT" | "ADMIN">) {
     return Object.entries(permissionMap)
       .filter(([, role]) => role !== "NONE")
       .map(([userId, role]) => ({ userId, role }));
   }
 
-  async function saveAccessSettings(nextVisibility: "PUBLIC" | "RESTRICTED", nextPermissions: Record<string, "NONE" | "VIEW" | "EDIT">) {
-    if (!isOwner) return false;
+  async function saveAccessSettings(nextVisibility: "PUBLIC" | "RESTRICTED", nextPermissions: Record<string, "NONE" | "VIEW" | "EDIT" | "ADMIN">) {
+    if (!canManageMembers) return false;
     setAccessSaving(true);
     setError("");
     try {
+      const payload: Record<string, unknown> = {
+        memberPermissions: buildMemberPermissionsPayload(nextPermissions),
+      };
+      if (isOwner) {
+        payload.visibility = nextVisibility;
+      }
+
       const response = await fetch(`/api/projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          visibility: nextVisibility,
-          memberPermissions: buildMemberPermissionsPayload(nextPermissions),
-        }),
+        body: JSON.stringify(payload),
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -153,7 +181,7 @@ export function ProjectOverview({
     }
   }
 
-  async function updateMemberPermission(userId: string, role: "NONE" | "VIEW" | "EDIT") {
+  async function updateMemberPermission(userId: string, role: "NONE" | "VIEW" | "EDIT" | "ADMIN") {
     const previous = permissions;
     const next = {
       ...permissions,
@@ -195,7 +223,7 @@ export function ProjectOverview({
               aria-label={`Change access for ${item.name}`}
               aria-expanded={permissionMenuFor === item.id}
               onClick={() => setPermissionMenuFor((prev) => (prev === item.id ? null : item.id))}
-              disabled={!isOwner || accessSaving}
+              disabled={!canManageMembers || accessSaving}
             >
               <Ellipsis size={14} />
             </button>
@@ -215,6 +243,13 @@ export function ProjectOverview({
                     onClick={() => updateMemberPermission(item.id, "EDIT")}
                   >
                     Edit
+                  </button>
+                  <button
+                    type="button"
+                    className={`member-menu-item role-admin ${role === "ADMIN" ? "is-active" : ""}`}
+                    onClick={() => updateMemberPermission(item.id, "ADMIN")}
+                  >
+                    Admin
                   </button>
                   <button
                     type="button"
@@ -375,7 +410,7 @@ export function ProjectOverview({
           <h1>Mind Garden</h1>
         </div>
         <div className="top-actions">
-          <div className="account-menu">
+          <div className="account-menu" ref={accountMenuRef}>
             <button className="avatar account-trigger" aria-expanded={isAccountOpen} aria-label="Open account menu" onClick={() => setIsAccountOpen((value) => !value)}>
               {currentUser.avatarUrl && !avatarLoadFailed ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -536,252 +571,249 @@ export function ProjectOverview({
         </div>
       </div>
 
-      {/* ── Settings drawer ── */}
-      {isToolsOpen ? (
-        <div className="pd-drawer-overlay">
-          <div className="pd-drawer-backdrop" onClick={() => setIsToolsOpen(false)} aria-hidden />
-          <aside className="pd-drawer">
-            <div className="pd-drawer-head">
-              <h3>Project settings</h3>
-              <div className="pd-drawer-head-actions">
-                <button
-                  className="btn icon pd-save-btn"
-                  onClick={saveAllSettings}
-                  disabled={!isOwner || saving || !isSettingsDirty}
-                  aria-label="Save settings"
-                  title={isSettingsDirty ? "Save changes" : "No unsaved changes"}
-                >
-                  <Save size={16} />
-                </button>
-                <button className="btn icon" onClick={() => setIsToolsOpen(false)} aria-label="Close settings">
-                  <X size={16} />
-                </button>
-              </div>
+      {/* ── Settings drawer (same pattern as Topic Workspace) ── */}
+      <button
+        className={`drawer-backdrop ${isToolsOpen ? "open" : ""}`}
+        aria-label="Close project settings"
+        onClick={() => setIsToolsOpen(false)}
+      />
+      <aside className={`properties-drawer ${isToolsOpen ? "open" : ""}`} aria-hidden={!isToolsOpen}>
+        <div className="drawer-header">
+          <div>
+            <h2>Project settings</h2>
+            <p className="muted">General, access, and danger zone</p>
+          </div>
+          <div className="pd-drawer-head-actions">
+            <button
+              className="btn primary"
+              onClick={saveAllSettings}
+              disabled={!isOwner || saving || !isSettingsDirty}
+              aria-label="Save settings"
+              title={isSettingsDirty ? "Save changes" : "No unsaved changes"}
+            >
+              <Save size={16} /> Save
+            </button>
+            <button className="btn icon" onClick={() => setIsToolsOpen(false)} aria-label="Close settings">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        <section className="panel section settings-section">
+          <div className="settings-section-header">
+            <div className="settings-section-icon icon-blue"><Settings size={15} /></div>
+            <div className="settings-section-label">
+              <strong>General</strong>
+              <span>Name and cover image</span>
             </div>
-
-            <div className="pd-drawer-body">
-
-              {/* ── Section 1: General ── */}
-              <div className="settings-section">
-                <div className="settings-section-header">
-                  <div className="settings-section-icon icon-blue"><Settings size={15} /></div>
-                  <div className="settings-section-label">
-                    <strong>General</strong>
-                    <span>Name and cover image</span>
-                  </div>
-                </div>
-                <div className="settings-fields">
-                  <label className="field">
-                    <span>Project name</span>
-                    <input className="input" value={projectName} onChange={(event) => setProjectName(event.target.value)} disabled={!isOwner} />
-                  </label>
-                  <div className="field">
-                    <span className="field-label-with-count">Description <span className="char-count">{projectDescription.length}/100</span></span>
-                    <textarea
-                      className="input settings-desc-textarea"
-                      rows={2}
-                      maxLength={100}
-                      placeholder="Short project summary…"
-                      value={projectDescription}
-                      onChange={(event) => setProjectDescription(event.target.value)}
-                      disabled={!isOwner}
-                    />
-                  </div>
-                  <div className="field">
-                    <span>Cover image</span>
-                    <div className="image-compact-row">
-                      <div className="image-compact-thumb" onClick={() => { if (isOwner) (document.getElementById('cover-image-input') as HTMLInputElement)?.click(); }}>
-                        {projectImage ? (
-                          <>
-                            <img src={projectImage} alt="cover" />
-                            {isOwner && (
-                              <button
-                                type="button"
-                                className="image-thumb-remove"
-                                onClick={(e) => { e.stopPropagation(); setProjectImage(""); setImageUploadError(""); setImageMode("upload"); }}
-                                title="Remove image"
-                                aria-label="Remove image"
-                              ><X size={12} /></button>
-                            )}
-                          </>
-                        ) : (
-                          <span className="image-compact-empty">🖼</span>
-                        )}
-                        <input
-                          id="cover-image-input"
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp,image/gif"
-                          className="image-upload-input"
-                          disabled={!isOwner}
-                          onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (!file) return;
-                            if (file.size > 2 * 1024 * 1024) { setImageUploadError("Image must be under 2 MB"); return; }
-                            setImageUploadError("");
-                            const reader = new FileReader();
-                            reader.onload = () => { setProjectImage(reader.result as string); setImageMode("upload"); };
-                            reader.readAsDataURL(file);
-                          }}
-                        />
-                      </div>
-                      <div className="image-compact-meta">
-                        {imageMode === "url" ? (
-                          <input
-                            className="input image-compact-url"
-                            placeholder="https://…"
-                            value={projectImage}
-                            onChange={(event) => setProjectImage(event.target.value)}
-                            disabled={!isOwner}
-                          />
-                        ) : (
-                          <span className="image-compact-name muted">
-                            {projectImage ? "Image uploaded" : "No image set"}
-                          </span>
-                        )}
-                        <div className="image-compact-actions">
-                          <button type="button" className="image-action-btn" onClick={() => { if (isOwner) (document.getElementById('cover-image-input') as HTMLInputElement)?.click(); }} disabled={!isOwner}>Upload</button>
-                          <span className="image-action-sep">or</span>
-                          <button type="button" className={`image-action-btn${imageMode === "url" ? " is-active" : ""}`} onClick={() => setImageMode(imageMode === "url" ? "upload" : "url")} disabled={!isOwner}>Paste link</button>
-                        </div>
-                        {imageUploadError && <span className="image-upload-error">{imageUploadError}</span>}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Section 2: Permissions ── */}
-              <div className="settings-section">
-                <div className="settings-section-header">
-                  <div className="settings-section-icon icon-teal"><Shield size={15} /></div>
-                  <div className="settings-section-label">
-                    <strong>Member access</strong>
-                    <span>Visibility and member permissions</span>
-                  </div>
-                </div>
-                <div className="settings-fields">
-                  <div className="visibility-cards">
-                    <button
-                      type="button"
-                      className={`visibility-card${projectVisibility === "PUBLIC" ? " is-active" : ""}`}
-                      onClick={() => { if (projectVisibility !== "PUBLIC") void handleVisibilityChange("PUBLIC"); }}
-                      disabled={!isOwner || accessSaving}
-                    >
-                      <Globe size={20} />
-                      <strong>Public</strong>
-                      <span>Anyone can view this project</span>
-                    </button>
-                    <button
-                      type="button"
-                      className={`visibility-card${projectVisibility === "RESTRICTED" ? " is-active" : ""}`}
-                      onClick={() => { if (projectVisibility !== "RESTRICTED") void handleVisibilityChange("RESTRICTED"); }}
-                      disabled={!isOwner || accessSaving}
-                    >
-                      <Lock size={20} />
-                      <strong>Restricted</strong>
-                      <span>Invited members only</span>
-                    </button>
-                  </div>
-                </div>
-
-                {projectVisibility === "RESTRICTED" ? (
-                  <div className="member-access-inline">
-                    <button
-                      className="btn member-access-trigger"
-                      onClick={() => {
-                        setPermissionMenuFor(null);
-                        setIsMembersModalOpen(true);
-                      }}
-                      disabled={!isOwner || accessSaving}
-                    >
-                      {accessibleMemberCount} member{accessibleMemberCount !== 1 ? "s" : ""} can access
-                    </button>
-                    <p className="member-access-hint muted">Choose who can view or edit this project.</p>
-                  </div>
-                ) : (
-                  <p className="member-access-public muted">Public project does not require member selection.</p>
-                )}
-              </div>
-
-              {projectVisibility === "RESTRICTED" && isMembersModalOpen ? (
-                <div className="member-modal-overlay">
-                  <div
-                    className="member-modal-backdrop"
-                    onClick={() => {
-                      setPermissionMenuFor(null);
-                      setIsMembersModalOpen(false);
-                    }}
-                    aria-hidden
-                  />
-                  <div className="member-modal" role="dialog" aria-modal="true" aria-label="Manage members">
-                    <div className="member-modal-head">
-                      <h4>Manage member access</h4>
-                      <button
-                        className="btn icon"
-                        onClick={() => {
-                          setPermissionMenuFor(null);
-                          setIsMembersModalOpen(false);
-                        }}
-                        aria-label="Close member access modal"
-                      >
-                        <X size={15} />
-                      </button>
-                    </div>
-                    <input
-                      className="input"
-                      placeholder="Search by name or email…"
-                      value={memberSearch}
-                      onChange={(event) => setMemberSearch(event.target.value)}
-                      disabled={!isOwner}
-                    />
-                    <div className="project-permission-list member-modal-list">
-                      {filteredMembers.length > 0 ? (
-                        <>
-                          <div className="member-modal-group">
-                            <div className="member-modal-group-title">Members with access ({filteredAccessibleMembers.length})</div>
-                            {filteredAccessibleMembers.length > 0 ? filteredAccessibleMembers.map(renderMemberPermissionRow) : (
-                              <p className="member-group-empty muted">No members currently have access.</p>
-                            )}
-                          </div>
-
-                          <div className="member-modal-group member-modal-group-muted">
-                            <div className="member-modal-group-title">Members without access ({filteredNoAccessMembers.length})</div>
-                            {filteredNoAccessMembers.length > 0 ? filteredNoAccessMembers.map(renderMemberPermissionRow) : (
-                              <p className="member-group-empty muted">All matched members already have access.</p>
-                            )}
-                          </div>
-                        </>
-                      ) : (
-                        <p className="member-search-empty muted">No members found.</p>
+          </div>
+          <div className="settings-fields">
+            <label className="field">
+              <span>Project name</span>
+              <input className="input" value={projectName} onChange={(event) => setProjectName(event.target.value)} disabled={!isOwner} />
+            </label>
+            <div className="field">
+              <span className="field-label-with-count">Description <span className="char-count">{projectDescription.length}/100</span></span>
+              <textarea
+                className="input settings-desc-textarea"
+                rows={2}
+                maxLength={100}
+                placeholder="Short project summary…"
+                value={projectDescription}
+                onChange={(event) => setProjectDescription(event.target.value)}
+                disabled={!isOwner}
+              />
+            </div>
+            <div className="field">
+              <span>Cover image</span>
+              <div className="image-compact-row">
+                <div className="image-compact-thumb" onClick={() => { if (isOwner) (document.getElementById('cover-image-input') as HTMLInputElement)?.click(); }}>
+                  {projectImage ? (
+                    <>
+                      <img src={projectImage} alt="cover" />
+                      {isOwner && (
+                        <button
+                          type="button"
+                          className="image-thumb-remove"
+                          onClick={(e) => { e.stopPropagation(); setProjectImage(""); setImageUploadError(""); setImageMode("upload"); }}
+                          title="Remove image"
+                          aria-label="Remove image"
+                        ><X size={12} /></button>
                       )}
-                    </div>
-                  </div>
+                    </>
+                  ) : (
+                    <span className="image-compact-empty">🖼</span>
+                  )}
+                  <input
+                    id="cover-image-input"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    className="image-upload-input"
+                    disabled={!isOwner}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 2 * 1024 * 1024) { setImageUploadError("Image must be under 2 MB"); return; }
+                      setImageUploadError("");
+                      const reader = new FileReader();
+                      reader.onload = () => { setProjectImage(reader.result as string); setImageMode("upload"); };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
                 </div>
-              ) : null}
-
-              {/* ── Section 3: Danger zone ── */}
-              <div className="settings-section settings-danger">
-                <div className="settings-section-header">
-                  <div className="settings-section-icon icon-red"><Trash2 size={15} /></div>
-                  <div className="settings-section-label">
-                    <strong>Danger zone</strong>
-                    <span>Irreversible actions</span>
+                <div className="image-compact-meta">
+                  {imageMode === "url" ? (
+                    <input
+                      className="input image-compact-url"
+                      placeholder="https://…"
+                      value={projectImage}
+                      onChange={(event) => setProjectImage(event.target.value)}
+                      disabled={!isOwner}
+                    />
+                  ) : (
+                    <span className="image-compact-name muted">
+                      {projectImage ? "Image uploaded" : "No image set"}
+                    </span>
+                  )}
+                  <div className="image-compact-actions">
+                    <button type="button" className="image-action-btn" onClick={() => { if (isOwner) (document.getElementById('cover-image-input') as HTMLInputElement)?.click(); }} disabled={!isOwner}>Upload</button>
+                    <span className="image-action-sep">or</span>
+                    <button type="button" className={`image-action-btn${imageMode === "url" ? " is-active" : ""}`} onClick={() => setImageMode(imageMode === "url" ? "upload" : "url")} disabled={!isOwner}>Paste link</button>
                   </div>
-                </div>
-                <div className="settings-danger-content">
-                  <div className="settings-danger-text">
-                    <strong>Delete this project</strong>
-                    <span>Removes all topics and articles permanently.</span>
-                  </div>
-                  <button className="btn danger" onClick={deleteProject} disabled={!isOwner}>
-                    <Trash2 size={15} /> Delete
-                  </button>
+                  {imageUploadError && <span className="image-upload-error">{imageUploadError}</span>}
                 </div>
               </div>
-
-              {error ? <p className="login-error" style={{padding: "0 24px"}}>{error}</p> : null}
             </div>
-          </aside>
+          </div>
+        </section>
+
+        <section className="panel section settings-section">
+          <div className="settings-section-header">
+            <div className="settings-section-icon icon-teal"><Shield size={15} /></div>
+            <div className="settings-section-label">
+              <strong>Member access</strong>
+              <span>Visibility and member permissions</span>
+            </div>
+          </div>
+          <div className="settings-fields">
+            <div className="visibility-cards">
+              <button
+                type="button"
+                className={`visibility-card${projectVisibility === "PUBLIC" ? " is-active" : ""}`}
+                onClick={() => { if (projectVisibility !== "PUBLIC") void handleVisibilityChange("PUBLIC"); }}
+                disabled={!isOwner || accessSaving}
+              >
+                <Globe size={20} />
+                <strong>Public</strong>
+                <span>Anyone can view this project</span>
+              </button>
+              <button
+                type="button"
+                className={`visibility-card${projectVisibility === "RESTRICTED" ? " is-active" : ""}`}
+                onClick={() => { if (projectVisibility !== "RESTRICTED") void handleVisibilityChange("RESTRICTED"); }}
+                disabled={!isOwner || accessSaving}
+              >
+                <Lock size={20} />
+                <strong>Restricted</strong>
+                <span>Invited members only</span>
+              </button>
+            </div>
+          </div>
+
+          {projectVisibility === "RESTRICTED" ? (
+            <div className="member-access-inline">
+              <button
+                className="btn member-access-trigger"
+                onClick={() => {
+                  setPermissionMenuFor(null);
+                  setIsMembersModalOpen(true);
+                }}
+                disabled={!canManageMembers || accessSaving}
+              >
+                {accessibleMemberCount} member{accessibleMemberCount !== 1 ? "s" : ""} can access
+              </button>
+              <p className="member-access-hint muted">Choose who can view or edit this project.</p>
+            </div>
+          ) : (
+            <p className="member-access-public muted">Public project does not require member selection.</p>
+          )}
+        </section>
+
+        <section className="panel section settings-section settings-danger">
+          <div className="settings-section-header">
+            <div className="settings-section-icon icon-red"><Trash2 size={15} /></div>
+            <div className="settings-section-label">
+              <strong>Danger zone</strong>
+              <span>Irreversible actions</span>
+            </div>
+          </div>
+          <div className="settings-danger-content">
+            <div className="settings-danger-text">
+              <strong>Delete this project</strong>
+              <span>Removes all topics and articles permanently.</span>
+            </div>
+            <button className="btn danger" onClick={deleteProject} disabled={!isOwner}>
+              <Trash2 size={15} /> Delete
+            </button>
+          </div>
+        </section>
+
+        {error ? <p className="login-error" style={{ padding: "0 2px" }}>{error}</p> : null}
+      </aside>
+
+      {projectVisibility === "RESTRICTED" && isMembersModalOpen ? (
+        <div className="member-modal-overlay">
+          <div
+            className="member-modal-backdrop"
+            onClick={() => {
+              setPermissionMenuFor(null);
+              setIsMembersModalOpen(false);
+            }}
+            aria-hidden
+          />
+          <div className="member-modal" role="dialog" aria-modal="true" aria-label="Manage members">
+            <div className="member-modal-head">
+              <h4>Manage member access</h4>
+              <button
+                className="btn icon"
+                onClick={() => {
+                  setPermissionMenuFor(null);
+                  setIsMembersModalOpen(false);
+                }}
+                aria-label="Close member access modal"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            <input
+              className="input"
+              placeholder="Search by name or email…"
+              value={memberSearch}
+              onChange={(event) => setMemberSearch(event.target.value)}
+              disabled={!canManageMembers}
+            />
+            <div className="project-permission-list member-modal-list">
+              {filteredMembers.length > 0 ? (
+                <>
+                  <div className="member-modal-group">
+                    <div className="member-modal-group-title">Members with access ({filteredAccessibleMembers.length})</div>
+                    {filteredAccessibleMembers.length > 0 ? filteredAccessibleMembers.map(renderMemberPermissionRow) : (
+                      <p className="member-group-empty muted">No members currently have access.</p>
+                    )}
+                  </div>
+
+                  <div className="member-modal-group member-modal-group-muted">
+                    <div className="member-modal-group-title">Members without access ({filteredNoAccessMembers.length})</div>
+                    {filteredNoAccessMembers.length > 0 ? filteredNoAccessMembers.map(renderMemberPermissionRow) : (
+                      <p className="member-group-empty muted">All matched members already have access.</p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p className="member-search-empty muted">No members found.</p>
+              )}
+            </div>
+          </div>
         </div>
       ) : null}
     </main>

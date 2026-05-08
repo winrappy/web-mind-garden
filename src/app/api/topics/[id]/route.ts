@@ -15,7 +15,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   const canEdit =
     topic.project.authorId === user.id ||
-    topic.project.permissions.some((permission) => permission.userId === user.id && permission.role === "EDIT");
+    topic.project.permissions.some((permission) => {
+      if (permission.userId !== user.id) return false;
+      const role = String(permission.role);
+      return role === "EDIT" || role === "ADMIN";
+    });
   if (!canEdit) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await request.json().catch(() => ({}));
@@ -53,7 +57,11 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
 
   const canEdit =
     topic.project.authorId === user.id ||
-    topic.project.permissions.some((permission) => permission.userId === user.id && permission.role === "EDIT");
+    topic.project.permissions.some((permission) => {
+      if (permission.userId !== user.id) return false;
+      const role = String(permission.role);
+      return role === "EDIT" || role === "ADMIN";
+    });
   if (!canEdit) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   await prisma.topic.delete({ where: { id } });

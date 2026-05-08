@@ -19,12 +19,17 @@ export async function POST(request: Request) {
 
   const canManage =
     project.authorId === user.id ||
-    project.permissions.some((permission) => permission.userId === user.id && permission.role === "EDIT");
+    project.permissions.some((permission) => {
+      if (permission.userId !== user.id) return false;
+      const role = String(permission.role);
+      return role === "EDIT" || role === "ADMIN";
+    });
   if (!canManage) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const topic = await prisma.topic.create({
     data: {
       projectId,
+      authorId: user.id,
       name,
       description: description || null,
     },
