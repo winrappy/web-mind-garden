@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
@@ -44,7 +45,7 @@ export async function destroySession() {
   cookieStore.delete(COOKIE_NAME);
 }
 
-export async function getCurrentUser() {
+export const getCurrentUser = cache(async function getCurrentUser() {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) return null;
@@ -56,7 +57,7 @@ export async function getCurrentUser() {
 
   if (!session || session.expiresAt < new Date()) return null;
   return session.user;
-}
+});
 
 export function signState(value: string) {
   const secret = process.env.SESSION_SECRET || "dev-secret";

@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Content } from "@tiptap/react";
-import { BookOpen, Ellipsis, FilePlus2, Globe, Leaf, Lock, LogOut, PanelRightOpen, Save, Search, Settings, Shield, Trash2, X } from "lucide-react";
+import { ArrowLeft, BookOpen, Ellipsis, FilePlus2, Globe, Leaf, Lock, LogOut, PanelRightOpen, Save, Search, Settings, Shield, Trash2, X } from "lucide-react";
 
 const RichEditor = dynamic(() => import("@/components/rich-editor").then((module) => module.RichEditor), { ssr: false });
 
@@ -63,6 +63,7 @@ export function Workspace({
   const [newPermissionMenuFor, setNewPermissionMenuFor] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [treeMenuFor, setTreeMenuFor] = useState<string | null>(null);
+  const [settingsModalArticleId, setSettingsModalArticleId] = useState<string | null>(null);
   const [pendingDeleteArticleId, setPendingDeleteArticleId] = useState<string | null>(null);
   const [isDeletingArticle, setIsDeletingArticle] = useState(false);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
@@ -256,12 +257,12 @@ export function Workspace({
       if (!response.ok) return;
       const article = await response.json();
 
-      const patch: Partial<Article> = {
-        title: nextTitle,
-        visibility: newVisibility,
-      };
-      if (newVisibility === "CUSTOM") {
-        patch.permissions = nextPermissions;
+      const patch: Partial<Article> = { title: nextTitle };
+      if (!parentId) {
+        patch.visibility = newVisibility;
+        if (newVisibility === "CUSTOM") {
+          patch.permissions = nextPermissions;
+        }
       }
 
       await fetch(`/api/articles/${article.id}`, {
@@ -303,8 +304,7 @@ export function Workspace({
   }
 
   function openArticleSettings(articleId: string) {
-    setSelectedId(articleId);
-    setIsPropertiesOpen(true);
+    setSettingsModalArticleId(articleId);
     setTreeMenuFor(null);
   }
 
@@ -423,6 +423,9 @@ export function Workspace({
       <section className="workspace">
         <div className="workspace-page-head pd-header">
           <div className="pd-header-left">
+            <a href={backHref} className="btn icon" title="Project overview" aria-label="Back to project overview">
+              <ArrowLeft size={18} />
+            </a>
             <div className="pd-title-block">
               <h1 className="pd-title">{projectName}</h1>
               <p className="pd-subtitle muted">Topic workspace</p>
@@ -450,9 +453,9 @@ export function Workspace({
             {articles.length > 0 ? (
               <div className="article-detail-info">
                 {articles.filter((a) => !normalizeParentId(a.parentId)).map((a) => (
-                  <div key={a.id} className="article-detail-stat article-detail-row">
+                  <div key={a.id} className={`article-detail-stat article-detail-row${a.role === "NONE" ? " no-access" : ""}`}>
                     <span className="article-detail-stat-label">{getArticleTitle(a)}</span>
-                    <button className="btn" onClick={() => setSelectedId(a.id)}>
+                    <button className="btn" disabled={a.role === "NONE"} onClick={() => setSelectedId(a.id)}>
                       <BookOpen size={14} /> Open
                     </button>
                   </div>
@@ -647,54 +650,58 @@ export function Workspace({
                   onKeyDown={(e) => { if (e.key === "Enter") createArticle(newParentId); }}
                 />
               </label>
-              <div className="field field-visibility-cards">
-                <span>Visibility</span>
-                <div className="visibility-cards">
-                  <button
-                    type="button"
-                    className={`visibility-card${newVisibility === "PUBLIC" ? " is-active" : ""}`}
-                    onClick={() => {
-                      setNewVisibility("PUBLIC");
-                      setNewPermissionMenuFor(null);
-                      setIsNewMembersModalOpen(false);
-                    }}
-                    disabled={isCreating}
-                  >
-                    <Globe size={20} />
-                    <strong>Public view</strong>
-                    <span>Anyone can read this article</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`visibility-card${newVisibility === "CUSTOM" ? " is-active" : ""}`}
-                    onClick={() => setNewVisibility("CUSTOM")}
-                    disabled={isCreating}
-                  >
-                    <Lock size={20} />
-                    <strong>Custom permissions</strong>
-                    <span>Use role-based access controls</span>
-                  </button>
-                </div>
-              </div>
-              {newVisibility === "CUSTOM" ? (
-                <div className="field">
-                  <span>Member access</span>
-                  <div className="member-access-inline new-member-access-inline">
-                    <button
-                      className="btn member-access-trigger"
-                      onClick={() => {
-                        setNewPermissionMenuFor(null);
-                        setIsNewMembersModalOpen(true);
-                      }}
-                      disabled={isCreating}
-                    >
-                      {newAccessibleMemberCount} member{newAccessibleMemberCount !== 1 ? "s" : ""} can access
-                    </button>
-                    <p className="member-access-hint muted">Choose who can view or edit this article.</p>
+              {!newParentId && (
+                <>
+                  <div className="field field-visibility-cards">
+                    <span>Visibility</span>
+                    <div className="visibility-cards">
+                      <button
+                        type="button"
+                        className={`visibility-card${newVisibility === "PUBLIC" ? " is-active" : ""}`}
+                        onClick={() => {
+                          setNewVisibility("PUBLIC");
+                          setNewPermissionMenuFor(null);
+                          setIsNewMembersModalOpen(false);
+                        }}
+                        disabled={isCreating}
+                      >
+                        <Globe size={20} />
+                        <strong>Public view</strong>
+                        <span>Anyone can read this article</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`visibility-card${newVisibility === "CUSTOM" ? " is-active" : ""}`}
+                        onClick={() => setNewVisibility("CUSTOM")}
+                        disabled={isCreating}
+                      >
+                        <Lock size={20} />
+                        <strong>Custom permissions</strong>
+                        <span>Use role-based access controls</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <p className="new-permissions-note muted">Public view allows anyone to read this article.</p>
+                  {newVisibility === "CUSTOM" ? (
+                    <div className="field">
+                      <span>Member access</span>
+                      <div className="member-access-inline new-member-access-inline">
+                        <button
+                          className="btn member-access-trigger"
+                          onClick={() => {
+                            setNewPermissionMenuFor(null);
+                            setIsNewMembersModalOpen(true);
+                          }}
+                          disabled={isCreating}
+                        >
+                          {newAccessibleMemberCount} member{newAccessibleMemberCount !== 1 ? "s" : ""} can access
+                        </button>
+                        <p className="member-access-hint muted">Choose who can view or edit this article.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="new-permissions-note muted">Public view allows anyone to read this article.</p>
+                  )}
+                </>
               )}
             </div>
             <div className="modal-actions">
@@ -762,6 +769,126 @@ export function Workspace({
           </div>
         </div>
       ) : null}
+
+      {settingsModalArticleId ? (() => {
+        const settingsArticle = articles.find((a) => a.id === settingsModalArticleId);
+        if (!settingsArticle) return null;
+        const settingsEditable = settingsArticle.role === "EDIT";
+        const settingsPermissions = getArticlePermissions(settingsArticle);
+        const settingsDescendantIds = new Set(getDescendantIds(articles, settingsArticle.id));
+        return (
+          <div className="modal-backdrop" onClick={() => setSettingsModalArticleId(null)}>
+            <div className="modal-box modal-box-settings" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Edit settings">
+              <div className="modal-accent-head modal-accent-head-blue">
+                <div className="modal-accent-icon modal-accent-icon-blue"><Settings size={22} /></div>
+                <div>
+                  <h2>Edit settings</h2>
+                  <p>{getArticleTitle(settingsArticle)}</p>
+                </div>
+                <button className="btn icon modal-close-btn" onClick={() => setSettingsModalArticleId(null)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="settings-section new-article-fields">
+                <section className="panel section settings-section">
+                  <div className="settings-section-header">
+                    <div className="settings-section-icon icon-blue"><Settings size={15} /></div>
+                    <div className="settings-section-label">
+                      <strong>Page format</strong>
+                      <span>Hierarchy and visibility</span>
+                    </div>
+                  </div>
+                  <div className="settings-fields">
+                    <label className="field">
+                      <span>Move under article</span>
+                      <select
+                        className="select"
+                        disabled={!settingsEditable}
+                        value={settingsArticle.parentId || ""}
+                        onChange={(event) => {
+                          patchArticle(settingsArticle.id, { parentId: event.target.value || null });
+                        }}
+                      >
+                        <option value="">Root article</option>
+                        {articles
+                          .filter((a) => a.id !== settingsArticle.id && a.role === "EDIT" && !settingsDescendantIds.has(a.id))
+                          .map((a) => (
+                            <option key={a.id} value={a.id}>{getArticleTitle(a)}</option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Visibility</span>
+                      <select
+                        className="select"
+                        disabled={!settingsEditable}
+                        value={settingsArticle.visibility}
+                        onChange={(event) => patchArticle(settingsArticle.id, { visibility: event.target.value as Visibility })}
+                      >
+                        <option value="CUSTOM">Custom permissions</option>
+                        <option value="PUBLIC">Public view</option>
+                      </select>
+                    </label>
+                  </div>
+                </section>
+                <section className="panel section settings-section">
+                  <div className="settings-section-header">
+                    <div className="settings-section-icon icon-teal"><Shield size={15} /></div>
+                    <div className="settings-section-label">
+                      <strong>Permissions</strong>
+                      <span>Manage article access for each member</span>
+                    </div>
+                  </div>
+                  <div className="settings-fields">
+                    {users.map((user) => (
+                      <div className="permission-row" key={user.id}>
+                        <div>
+                          <strong>{user.name}</strong>
+                          <div className="muted">{user.email}</div>
+                        </div>
+                        <select
+                          className="select"
+                          disabled={!settingsEditable}
+                          value={settingsPermissions.find((p) => p.userId === user.id)?.role || "NONE"}
+                          onChange={(event) => {
+                            const perms = upsertPermission(settingsPermissions, user.id, event.target.value as Role);
+                            patchArticle(settingsArticle.id, { permissions: perms });
+                          }}
+                        >
+                          <option value="NONE">No access</option>
+                          <option value="VIEW">View</option>
+                          <option value="EDIT">Edit</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+                <section className="panel section settings-section settings-danger">
+                  <div className="settings-section-header">
+                    <div className="settings-section-icon icon-red"><Trash2 size={15} /></div>
+                    <div className="settings-section-label">
+                      <strong>Danger zone</strong>
+                      <span>Permanently remove this article</span>
+                    </div>
+                  </div>
+                  <div className="settings-fields">
+                    <button
+                      className="btn danger"
+                      disabled={!settingsEditable}
+                      onClick={() => {
+                        setSettingsModalArticleId(null);
+                        setPendingDeleteArticleId(settingsArticle.id);
+                      }}
+                    >
+                      <Trash2 size={16} /> Delete article
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+        );
+      })() : null}
 
       {pendingDeleteArticle ? (
         <div className="modal-backdrop" onClick={closeDeleteModal}>
@@ -843,10 +970,11 @@ function renderTree(
       return (
         <div key={nodeKey} className="tree-node">
           <div className="tree-row" style={{ paddingLeft: `${depth * 16}px` }}>
-            <div className={`tree-item ${article.id === selectedId ? "active" : ""}`}>
+            <div className={`tree-item ${article.id === selectedId ? "active" : ""} ${article.role === "NONE" ? "no-access" : ""}`}>
               <button
                 type="button"
                 className="tree-item-select"
+                disabled={article.role === "NONE"}
                 onClick={() => select(article.id)}
               >
                 <span className="tree-title">{getArticleTitle(article)}</span>
@@ -870,17 +998,14 @@ function renderTree(
                       <button type="button" className="tree-action-menu-btn" onClick={() => createChild(article.id)}>
                         Add child article
                       </button>
-                      <button type="button" className="tree-action-menu-btn" onClick={() => openSettings(article.id)}>
-                        Open settings
+                      <button type="button" className="tree-action-menu-btn accent" onClick={() => openSettings(article.id)}>
+                        Edit settings
                       </button>
                       {normalizeParentId(article.parentId) ? (
                         <button type="button" className="tree-action-menu-btn" onClick={() => moveToRoot(article.id)}>
                           Move to root
                         </button>
                       ) : null}
-                      <button type="button" className="tree-action-menu-btn danger" onClick={() => deleteById(article.id)}>
-                        Delete article
-                      </button>
                     </div>
                   ) : null}
                 </div>

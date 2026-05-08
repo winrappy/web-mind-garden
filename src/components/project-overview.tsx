@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Content } from "@tiptap/react";
-import { ArrowLeft, Ellipsis, FolderOpen, FolderPlus, Globe, Leaf, Lock, LogOut, Pencil, Save, Settings, Shield, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, Ellipsis, FolderOpen, FolderPlus, Globe, Leaf, Lock, LogOut, Pencil, RotateCcw, Save, Settings, Shield, Trash2, X } from "lucide-react";
 
 const RichEditor = dynamic(() => import("@/components/rich-editor").then((module) => module.RichEditor), { ssr: false });
 
@@ -50,6 +50,11 @@ export function ProjectOverview({
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
   const [permissionMenuFor, setPermissionMenuFor] = useState<string | null>(null);
+  const [topicModal, setTopicModal] = useState<{ mode: "create" } | { mode: "edit"; topic: ProjectTopic } | null>(null);
+  const [topicModalName, setTopicModalName] = useState("");
+  const [topicModalDesc, setTopicModalDesc] = useState("");
+  const [topicModalSaving, setTopicModalSaving] = useState(false);
+  const topicModalInputRef = useRef<HTMLInputElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [projectName, setProjectName] = useState(name);
@@ -329,6 +334,19 @@ export function ProjectOverview({
     }
   }
 
+  function resetAllSettings() {
+    setProjectName(savedName);
+    setProjectDescription(savedDescription ?? "");
+    setProjectImage(savedImage);
+    setImageMode(savedImage ? "url" : "upload");
+    setImageUploadError("");
+    setProjectVisibility(savedVisibility);
+    setPermissions({ ...savedPermissions });
+    setMemberSearch("");
+    setPermissionMenuFor(null);
+    setError("");
+  }
+
   async function deleteProject() {
     if (!isOwner) return;
     const ok = window.confirm("Delete this project and all topics/articles? This cannot be undone.");
@@ -342,46 +360,58 @@ export function ProjectOverview({
     window.location.href = "/";
   }
 
-  async function createTopic() {
+  function openCreateTopicModal() {
     if (!canEditProject) return;
-    const topicName = window.prompt("Topic name");
-    if (!topicName || !topicName.trim()) return;
-
-    const response = await fetch("/api/topics", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, name: topicName.trim() }),
-    });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      setError(body.error || "Unable to create topic");
-      return;
-    }
-
-    const topic = (await response.json()) as ProjectTopic;
-    setTopics((items) => [...items, topic]);
+    setTopicModalName("");
+    setTopicModalDesc("");
+    setTopicModal({ mode: "create" });
+    setTimeout(() => topicModalInputRef.current?.focus(), 50);
   }
 
-  async function editTopic(topic: ProjectTopic) {
+  function openEditTopicModal(topic: ProjectTopic) {
     if (!canEditProject) return;
-    const nextName = window.prompt("Edit topic name", topic.name);
-    if (!nextName || !nextName.trim()) return;
+    setTopicModalName(topic.name);
+    setTopicModalDesc(topic.description ?? "");
+    setTopicModal({ mode: "edit", topic });
+    setTimeout(() => topicModalInputRef.current?.focus(), 50);
+  }
 
-    const response = await fetch(`/api/topics/${topic.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: nextName.trim() }),
-    });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      setError(body.error || "Unable to edit topic");
-      return;
+  async function submitTopicModal() {
+    if (!topicModal || !topicModalName.trim()) return;
+    setTopicModalSaving(true);
+    try {
+      if (topicModal.mode === "create") {
+        const response = await fetch("/api/topics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, name: topicModalName.trim(), description: topicModalDesc.trim() || undefined }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          setError(body.error || "Unable to create topic");
+          return;
+        }
+        const topic = (await response.json()) as ProjectTopic;
+        setTopics((items) => [...items, topic]);
+      } else {
+        const { topic } = topicModal;
+        const response = await fetch(`/api/topics/${topic.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: topicModalName.trim(), description: topicModalDesc.trim() || null }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          setError(body.error || "Unable to edit topic");
+          return;
+        }
+        const updated = (await response.json()) as ProjectTopic;
+        setTopics((items) => items.map((item) => (item.id === topic.id ? updated : item)));
+      }
+      setTopicModal(null);
+    } finally {
+      setTopicModalSaving(false);
     }
-
-    const updated = (await response.json()) as ProjectTopic;
-    setTopics((items) => items.map((item) => (item.id === topic.id ? updated : item)));
   }
 
   async function deleteTopic(topic: ProjectTopic) {
@@ -527,7 +557,7 @@ export function ProjectOverview({
                 <p className="pd-section-subtitle muted">{topics.length} topic{topics.length !== 1 ? "s" : ""} in this project</p>
               </div>
               {canEditProject ? (
-                <button className="btn primary" onClick={createTopic}>
+                <button className="btn primary" onClick={openCreateTopicModal}>
                   <FolderPlus size={16} /> New topic
                 </button>
               ) : null}
@@ -549,7 +579,7 @@ export function ProjectOverview({
                     </a>
                     {canEditProject ? (
                       <div className="pd-topic-actions">
-                        <button className="btn icon" onClick={() => editTopic(topic)} title="Rename topic" aria-label="Rename topic">
+                        <button className="btn icon" onClick={() => openEditTopicModal(topic)} title="Rename topic" aria-label="Rename topic">
                           <Pencil size={14} />
                         </button>
                         <button className="btn icon danger" onClick={() => deleteTopic(topic)} title="Delete topic" aria-label="Delete topic">
@@ -581,18 +611,30 @@ export function ProjectOverview({
         <div className="drawer-header">
           <div>
             <h2>Project settings</h2>
-            <p className="muted">General, access, and danger zone</p>
           </div>
           <div className="pd-drawer-head-actions">
-            <button
-              className="btn primary"
-              onClick={saveAllSettings}
-              disabled={!isOwner || saving || !isSettingsDirty}
-              aria-label="Save settings"
-              title={isSettingsDirty ? "Save changes" : "No unsaved changes"}
-            >
-              <Save size={16} /> Save
-            </button>
+            {isOwner && isSettingsDirty ? (
+              <div className="pd-drawer-inline-actions">
+                <button
+                  className="btn pd-drawer-cancel-btn pd-drawer-action-btn"
+                  onClick={resetAllSettings}
+                  disabled={saving}
+                  aria-label="Undo changes"
+                  title="Undo changes"
+                >
+                  <RotateCcw size={14} />
+                </button>
+                <button
+                  className="btn pd-drawer-save-icon-btn pd-drawer-action-btn"
+                  onClick={saveAllSettings}
+                  disabled={saving}
+                  aria-label="Save settings"
+                  title="Save settings"
+                >
+                  <Check size={14} />
+                </button>
+              </div>
+            ) : null}
             <button className="btn icon" onClick={() => setIsToolsOpen(false)} aria-label="Close settings">
               <X size={16} />
             </button>
@@ -760,6 +802,129 @@ export function ProjectOverview({
 
         {error ? <p className="login-error" style={{ padding: "0 2px" }}>{error}</p> : null}
       </aside>
+
+      {topicModal ? (
+        <div className="modal-backdrop" onClick={() => setTopicModal(null)}>
+          <div
+            className="modal-box topic-modal-box"
+            role="dialog"
+            aria-modal="true"
+            aria-label={topicModal.mode === "create" ? "New topic" : "Rename topic"}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-accent-head project-modal-head">
+              <div className="modal-accent-icon project-modal-icon">
+                <FolderPlus size={20} />
+              </div>
+              <div className="project-modal-head-text">
+                <h2>{topicModal.mode === "create" ? "New topic" : "Rename topic"}</h2>
+                <p>{topicModal.mode === "create" ? "Add a topic to organise articles" : "Update this topic's name"}</p>
+              </div>
+              <div className="project-modal-head-actions">
+                <button
+                  className="btn primary project-modal-save-btn"
+                  onClick={() => void submitTopicModal()}
+                  disabled={topicModalSaving || !topicModalName.trim()}
+                >
+                  {topicModalSaving ? "Saving…" : topicModal.mode === "create" ? "Create topic" : "Save"}
+                </button>
+                <button className="btn icon modal-close-btn" type="button" onClick={() => setTopicModal(null)} aria-label="Close">
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            <div className="modal-form">
+
+              {/* ── General ── */}
+              <div className="settings-section">
+                <div className="settings-section-header">
+                  <div className="settings-section-icon icon-blue"><Settings size={15} /></div>
+                  <div className="settings-section-label">
+                    <strong>General</strong>
+                    <span>Name and description</span>
+                  </div>
+                </div>
+                <div className="settings-fields">
+                  <label className="field">
+                    <span>Topic name *</span>
+                    <input
+                      ref={topicModalInputRef}
+                      className="input"
+                      placeholder="e.g. Introduction, Chapter 1…"
+                      value={topicModalName}
+                      onChange={(e) => setTopicModalName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Escape") setTopicModal(null); }}
+                      disabled={topicModalSaving}
+                      maxLength={80}
+                      required
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Description</span>
+                    <textarea
+                      className="input modal-textarea"
+                      placeholder="What is this topic about?"
+                      value={topicModalDesc}
+                      onChange={(e) => setTopicModalDesc(e.target.value)}
+                      disabled={topicModalSaving}
+                      rows={2}
+                      maxLength={200}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* ── Access ── */}
+              <div className="settings-section">
+                <div className="settings-section-header">
+                  <div className="settings-section-icon icon-teal"><Shield size={15} /></div>
+                  <div className="settings-section-label">
+                    <strong>Access</strong>
+                    <span>Inherited from project settings</span>
+                  </div>
+                </div>
+                <div className="settings-fields">
+                  <div className="visibility-cards topic-modal-visibility-cards">
+                    <div className={`visibility-card${projectVisibility === "PUBLIC" ? " is-active" : ""} is-readonly`}>
+                      <Globe size={20} />
+                      <strong>Public</strong>
+                      <span>Anyone can view</span>
+                    </div>
+                    <div className={`visibility-card${projectVisibility === "RESTRICTED" ? " is-active" : ""} is-readonly`}>
+                      <Lock size={20} />
+                      <strong>Restricted</strong>
+                      <span>Invited members only</span>
+                    </div>
+                  </div>
+                  {projectVisibility === "RESTRICTED" && (
+                    <div className="topic-modal-member-list">
+                      {[{ id: currentUser.id, name: currentUser.name, email: currentUser.email }, ...users.filter((u) => u.id !== currentUser.id && permissions[u.id] !== "NONE")].map((u) => (
+                        <div key={u.id} className="permission-row member-row">
+                          <div className="member-row-main">
+                            <span className="member-row-avatar" aria-hidden>{(u.name.slice(0, 1) || "?").toUpperCase()}</span>
+                            <div className="member-row-meta">
+                              <strong>{u.name}{u.id === currentUser.id ? " (You)" : ""}</strong>
+                              <div className="muted">{u.email}</div>
+                            </div>
+                          </div>
+                          <span className={`member-access-label role-${u.id === currentUser.id && isOwner ? "owner" : (permissions[u.id] ?? "none").toLowerCase()}`}>
+                            {u.id === currentUser.id && isOwner ? "Owner" : (permissions[u.id] ?? "None")}
+                          </span>
+                        </div>
+                      ))}
+                      <p className="topic-modal-access-note muted">To change access, update project settings.</p>
+                    </div>
+                  )}
+                  {projectVisibility === "PUBLIC" && (
+                    <p className="topic-modal-access-note muted">This is a public project — anyone can view topics and articles.</p>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {projectVisibility === "RESTRICTED" && isMembersModalOpen ? (
         <div className="member-modal-overlay">

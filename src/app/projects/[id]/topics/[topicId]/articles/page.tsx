@@ -21,7 +21,7 @@ export default async function TopicArticlesPage({
   });
   if (!project) notFound();
 
-  const topic = await prisma.topic.findUnique({ where: { id: topicId }, select: { id: true, name: true, projectId: true, authorId: true } });
+  const topic = await prisma.topic.findUnique({ where: { id: topicId } });
   if (!topic || topic.projectId !== projectId) notFound();
 
   const isOwner = project.authorId === user.id;
@@ -51,8 +51,7 @@ export default async function TopicArticlesPage({
               authorId: project.authorId,
               permissions: project.permissions.map((permission) => ({ userId: permission.userId, role: String(permission.role) })),
             }),
-    }))
-    .filter((article) => article.role !== "NONE");
+    }));
 
   const canCreateArticle = isProjectElevated;
   if (!visibleArticles.length && canCreateArticle) {

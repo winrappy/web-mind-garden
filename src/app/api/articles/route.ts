@@ -40,16 +40,35 @@ export async function POST(request: Request) {
     }
   }
 
-  const elevatedUserIds = listProjectElevatedUserIds({
-    authorId: topic.project.authorId,
-    permissions: topic.project.permissions.map((permission) => ({
-      userId: permission.userId,
-      role: String(permission.role),
-    })),
-  });
-  const permissionData = [...new Set<string>([user.id, ...elevatedUserIds])].map((userId) => ({ userId, role: "EDIT" as const }));
-  if (topic.authorId && !permissionData.some((item) => item.userId === topic.authorId)) {
-    permissionData.push({ userId: topic.authorId, role: "EDIT" as const });
+  // Permissions: child articles inherit from the root ancestor; root articles use project-elevated defaults
+  let permissionData: { userId: string; role: "EDIT" | "VIEW" | "NONE" }[];
+  if (parentId) {
+    let rootId = parentId;
+    const visitedIds = new Set<string>();
+    while (true) {
+      if (visitedIds.has(rootId)) break;
+      visitedIds.add(rootId);
+      const ancestor = await prisma.article.findUnique({ where: { id: rootId }, select: { parentId: true } });
+      if (!ancestor?.parentId) break;
+      rootId = ancestor.parentId;
+    }
+    const rootArticle = await prisma.article.findUnique({ where: { id: rootId }, include: { permissions: true } });
+    permissionData = (rootArticle?.permissions ?? []).map((p) => ({ userId: p.userId, role: p.role as "EDIT" | "VIEW" | "NONE" }));
+    if (!permissionData.some((p) => p.userId === user.id)) {
+      permissionData.push({ userId: user.id, role: "EDIT" });
+    }
+  } else {
+    const elevatedUserIds = listProjectElevatedUserIds({
+      authorId: topic.project.authorId,
+      permissions: topic.project.permissions.map((permission) => ({
+        userId: permission.userId,
+        role: String(permission.role),
+      })),
+    });
+    permissionData = [...new Set<string>([user.id, ...elevatedUserIds])].map((userId) => ({ userId, role: "EDIT" as const }));
+    if (topic.authorId && !permissionData.some((item) => item.userId === topic.authorId)) {
+      permissionData.push({ userId: topic.authorId, role: "EDIT" as const });
+    }
   }
 
   const article = await prisma.article.create({
